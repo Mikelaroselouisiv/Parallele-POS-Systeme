@@ -1,0 +1,16 @@
+# Monorepo
+node_modules
+dist
+.DS_Store
+coverage
+*.tsbuildinfo
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# Backend env
+apps/backend/.env
+
+# OS / IDE
+Thumbs.db
+.env.local

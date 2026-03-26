@@ -1,0 +1,463 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  CASHIER
+  STOCK_MANAGER
+  ACCOUNTANT
+}
+
+enum SaleStatus {
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  MOBILE_MONEY
+  SPLIT
+}
+
+enum MovementType {
+  IN
+  OUT
+  ADJUSTMENT
+}
+
+enum FinanceType {
+  INCOME
+  EXPENSE
+}
+
+enum InventorySessionStatus {
+  DRAFT
+  COMPLETED
+  CANCELLED
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  ORDERED
+  CLOSED
+  CANCELLED
+}
+
+enum GoodsReceiptStatus {
+  DRAFT
+  POSTED
+}
+
+model Company {
+  id               Int      @id @default(autoincrement())
+  name             String
+  legalName        String?
+  address          String   @default("")
+  city             String?
+  country          String?
+  phone            String?
+  email            String?
+  headerText       String?
+  presentationText String?
+  logoUrl          String?
+  taxId            String?
+  currency         String   @default("XOF")
+  vatRatePercent   Decimal  @default(0) @db.Decimal(5, 2)
+  departments      Department[]
+  stores           Store[]
+  products         Product[]
+  users            User[]
+  expenseCategories ExpenseCategory[]
+  purchaseOrders   PurchaseOrder[]
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model PackagingUnit {
+  id               Int               @id @default(autoincrement())
+  departmentId     Int
+  department       Department        @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  code             String
+  label            String
+  sortOrder        Int               @default(0)
+  productSaleUnits ProductSaleUnit[]
+
+  @@unique([departmentId, code])
+}
+
+/// Département : unité autonome au sein de l’entreprise (stock, ventes, suivi) ; les produits y sont rattachés.
+model Department {
+  id             Int                       @id @default(autoincrement())
+  companyId    Int
+  company      Company                   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  users          User[]
+  products       Product[]
+  packagingUnits PackagingUnit[]
+  printerProfile DepartmentPrinterProfile?
+  inventorySessions InventorySession[]
+  purchaseOrders    PurchaseOrder[]
+  goodsReceipts     GoodsReceipt[]
+  createdAt      DateTime                  @default(now())
+
+  @@unique([companyId, name])
+}
+
+/// Réglages ticket thermique par département (entête, pied, matériel, texte de test).
+model DepartmentPrinterProfile {
+  id                  Int        @id @default(autoincrement())
+  departmentId        Int        @unique
+  department          Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  paperWidth          Int        @default(58)
+  deviceName          String     @default("")
+  autoCut             Boolean    @default(true)
+  showLogoOnReceipt   Boolean    @default(true)
+  receiptHeaderText   String?
+  receiptFooterText   String?
+  receiptLogoUrl      String?
+  previewSampleBody   String?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+}
+
+model Store {
+  id        Int       @id @default(autoincrement())
+  companyId Int?
+  company   Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  name      String
+  address   String
+  registers Register[]
+  sales     Sale[]
+  createdAt DateTime  @default(now())
+}
+
+model Register {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  storeId   Int
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  sales     Sale[]
+  createdAt DateTime @default(now())
+}
+
+model Product {
+  id           Int               @id @default(autoincrement())
+  companyId    Int
+  company      Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  departmentId Int?
+  department   Department?       @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  sku          String?
+  barcode      String?
+  name         String
+  description  String?
+  isService    Boolean           @default(false)
+  trackStock   Boolean           @default(true)
+  cost         Decimal           @default(0) @db.Decimal(12, 2)
+  stock        Decimal           @default(0) @db.Decimal(12, 3)
+  stockMin     Decimal           @default(0) @db.Decimal(12, 3)
+  saleUnits    ProductSaleUnit[]
+  saleItems    SaleItem[]
+  movements    StockMovement[]
+  inventoryLines InventoryLine[]
+  purchaseOrderLines PurchaseOrderLine[]
+  goodsReceiptLines  GoodsReceiptLine[]
+  recipeAsParent     ProductRecipe? @relation("RecipeParent")
+  recipeAsComponent  RecipeComponent[] @relation("RecipeComponent")
+  createdAt    DateTime          @default(now())
+}
+
+model ProductSaleUnit {
+  id              Int                   @id @default(autoincrement())
+  productId       Int
+  product         Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
+  packagingUnitId Int
+  packagingUnit   PackagingUnit         @relation(fields: [packagingUnitId], references: [id], onDelete: Restrict)
+  labelOverride   String?
+  /// Toujours 1 pour le flux « une unité de vente = une unité de stock » (quantités décimales : 0,5 caisse).
+  unitsPerPackage Decimal               @default(1) @db.Decimal(12, 4)
+  salePrice       Decimal               @db.Decimal(12, 2)
+  isDefault       Boolean               @default(false)
+  saleItems       SaleItem[]
+  volumePrices    ProductVolumePrice[]
+
+  @@unique([productId, packagingUnitId])
+}
+
+/// Rabais par volume : à partir de minQuantity (inclus), le prix unitaire devient unitPrice.
+model ProductVolumePrice {
+  id                Int             @id @default(autoincrement())
+  productSaleUnitId Int
+  productSaleUnit   ProductSaleUnit @relation(fields: [productSaleUnitId], references: [id], onDelete: Cascade)
+  minQuantity       Decimal         @db.Decimal(12, 4)
+  unitPrice         Decimal         @db.Decimal(12, 2)
+  sortOrder         Int             @default(0)
+
+  @@unique([productSaleUnitId, minQuantity])
+}
+
+model Sale {
+  id         Int         @id @default(autoincrement())
+  total      Decimal     @db.Decimal(12, 2)
+  subtotal   Decimal     @default(0) @db.Decimal(12, 2)
+  tax        Decimal     @default(0) @db.Decimal(12, 2)
+  status     SaleStatus  @default(COMPLETED)
+  cashier    String?
+  clientName String?
+  items      SaleItem[]
+  payments   Payment[]
+  userId     Int?
+  storeId    Int?
+  registerId Int?
+  user       User?       @relation(fields: [userId], references: [id])
+  store      Store?      @relation(fields: [storeId], references: [id])
+  register   Register?   @relation(fields: [registerId], references: [id])
+  /// Ligne de journal (encaissement) liée à cette vente — une entrée INCOME par vente POS.
+  financeEntry FinanceEntry?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+}
+
+model SaleItem {
+  id                Int              @id @default(autoincrement())
+  quantity          Decimal          @db.Decimal(12, 4)
+  baseQuantity      Decimal          @db.Decimal(12, 4)
+  unitPrice         Decimal          @db.Decimal(12, 2)
+  subtotal          Decimal          @db.Decimal(12, 2)
+  lineLabel         String?
+  saleId            Int
+  productId         Int
+  productSaleUnitId Int?
+  sale              Sale             @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product           Product          @relation(fields: [productId], references: [id])
+  productSaleUnit   ProductSaleUnit? @relation(fields: [productSaleUnitId], references: [id])
+  createdAt         DateTime         @default(now())
+}
+
+model Payment {
+  id        Int           @id @default(autoincrement())
+  saleId    Int
+  amount    Decimal       @db.Decimal(12, 2)
+  method    PaymentMethod
+  reference String?
+  createdAt DateTime      @default(now())
+  sale      Sale          @relation(fields: [saleId], references: [id], onDelete: Cascade)
+}
+
+model StockMovement {
+  id          Int          @id @default(autoincrement())
+  productId   Int
+  quantity    Decimal      @db.Decimal(12, 4)
+  type        MovementType
+  reason      String?
+  createdById Int?
+  inventorySessionId Int?
+  product     Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdBy   User?        @relation("StockMovementCreatedBy", fields: [createdById], references: [id])
+  inventorySession InventorySession? @relation(fields: [inventorySessionId], references: [id], onDelete: SetNull)
+  goodsReceiptId Int?
+  goodsReceipt   GoodsReceipt? @relation(fields: [goodsReceiptId], references: [id], onDelete: SetNull)
+  createdAt   DateTime     @default(now())
+}
+
+/// Session d’inventaire physique par département (brouillon → validation → ajustements de stock).
+model InventorySession {
+  id             Int                    @id @default(autoincrement())
+  departmentId   Int
+  department     Department             @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  status         InventorySessionStatus @default(DRAFT)
+  label          String?
+  note           String?
+  createdById    Int?
+  createdBy      User?                  @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  completedAt    DateTime?
+  lines          InventoryLine[]
+  stockMovements StockMovement[]
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+}
+
+model InventoryLine {
+  id              Int               @id @default(autoincrement())
+  sessionId       Int
+  session         InventorySession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  productId       Int
+  product         Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// Stock théorique au moment de l’ouverture de la ligne (référence affichage).
+  systemQtyAtOpen Decimal           @db.Decimal(12, 3)
+  countedQty      Decimal?          @db.Decimal(12, 3)
+  note            String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([sessionId, productId])
+}
+
+model PurchaseOrder {
+  id            Int                 @id @default(autoincrement())
+  companyId     Int
+  company       Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  departmentId  Int
+  department    Department          @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  supplierName  String?
+  status        PurchaseOrderStatus @default(DRAFT)
+  reference     String?
+  note          String?
+  createdById   Int?
+  createdBy     User?               @relation("PurchaseOrderCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  lines         PurchaseOrderLine[]
+  goodsReceipts GoodsReceipt[]
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+}
+
+model PurchaseOrderLine {
+  id              Int           @id @default(autoincrement())
+  purchaseOrderId Int
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  productId       Int
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantityOrdered Decimal       @db.Decimal(12, 4)
+  unitPriceEst    Decimal?      @db.Decimal(12, 2)
+
+  @@unique([purchaseOrderId, productId])
+}
+
+/// Réception marchandise : brouillon → POSTED → entrées stock + coût moyen pondéré.
+model GoodsReceipt {
+  id              Int                   @id @default(autoincrement())
+  purchaseOrderId Int?
+  purchaseOrder   PurchaseOrder?        @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  departmentId    Int
+  department      Department          @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  status          GoodsReceiptStatus @default(DRAFT)
+  receivedAt      DateTime            @default(now())
+  note            String?
+  createdById     Int?
+  createdBy       User?               @relation("GoodsReceiptCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  lines           GoodsReceiptLine[]
+  stockMovements  StockMovement[]
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+}
+
+model GoodsReceiptLine {
+  id             Int          @id @default(autoincrement())
+  goodsReceiptId Int
+  goodsReceipt   GoodsReceipt @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+  productId      Int
+  product        Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity       Decimal      @db.Decimal(12, 4)
+  unitCost       Decimal      @db.Decimal(12, 2)
+
+  @@unique([goodsReceiptId, productId])
+}
+
+/// Recette (BOM) : produit parent (souvent service) → composants MP consommés par unité de base du parent.
+model ProductRecipe {
+  id              Int               @id @default(autoincrement())
+  parentProductId Int               @unique
+  parentProduct   Product           @relation("RecipeParent", fields: [parentProductId], references: [id], onDelete: Cascade)
+  components      RecipeComponent[]
+}
+
+model RecipeComponent {
+  id             Int           @id @default(autoincrement())
+  recipeId       Int
+  recipe         ProductRecipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  componentProductId Int
+  componentProduct Product     @relation("RecipeComponent", fields: [componentProductId], references: [id], onDelete: Restrict)
+  /// Quantité de MP consommée par 1 unité de base du produit parent (même unité que Product.stock).
+  quantityPerParentBaseUnit Decimal @db.Decimal(12, 4)
+
+  @@unique([recipeId, componentProductId])
+}
+
+model ExpenseCategory {
+  id        Int     @id @default(autoincrement())
+  companyId Int
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name      String
+  entries   FinanceEntry[]
+
+  @@unique([companyId, name])
+}
+
+model FinanceEntry {
+  id          Int               @id @default(autoincrement())
+  type        FinanceType
+  amount      Decimal           @db.Decimal(12, 2)
+  description String
+  categoryId  Int?
+  category    ExpenseCategory?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  userId      Int?
+  user        User?             @relation("FinanceEntryUser", fields: [userId], references: [id])
+  saleId      Int?              @unique
+  sale        Sale?             @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  createdAt   DateTime          @default(now())
+}
+
+model CashClosure {
+  id             Int      @id @default(autoincrement())
+  registerId     Int?
+  expectedAmount Decimal  @db.Decimal(12, 2)
+  countedAmount  Decimal  @db.Decimal(12, 2)
+  variance       Decimal  @db.Decimal(12, 2)
+  createdById    Int?
+  createdBy      User?    @relation("CashClosureCreatedBy", fields: [createdById], references: [id])
+  createdAt      DateTime @default(now())
+}
+
+model User {
+  id           Int            @id @default(autoincrement())
+  email        String?
+  phone        String         @unique
+  password     String
+  role         Role           @default(CASHIER)
+  fullName     String?
+  isActive     Boolean        @default(true)
+  companyId    Int?
+  company      Company?       @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  departmentId Int?
+  department   Department?    @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  sales        Sale[]
+  sessions     Session[]
+  auditLogs    AuditLog[]
+  stockMoves   StockMovement[] @relation("StockMovementCreatedBy")
+  inventorySessions InventorySession[]
+  purchaseOrdersCreated PurchaseOrder[] @relation("PurchaseOrderCreatedBy")
+  goodsReceiptsCreated  GoodsReceipt[] @relation("GoodsReceiptCreatedBy")
+  financeEntries FinanceEntry[] @relation("FinanceEntryUser")
+  cashClosures CashClosure[] @relation("CashClosureCreatedBy")
+  createdAt    DateTime       @default(now())
+}
+
+model Session {
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  refreshToken String
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  user      User?    @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}

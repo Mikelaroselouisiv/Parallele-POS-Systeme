@@ -1,0 +1,79 @@
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { GetUser } from '../../common/decorators/get-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { CreateGoodsReceiptDto, CreatePurchaseOrderDto } from './dto/purchasing.dto';
+import { PurchasingService } from './purchasing.service';
+
+@Controller('purchasing')
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class PurchasingController {
+  constructor(private readonly purchasingService: PurchasingService) {}
+
+  @Post('orders')
+  @Roles('ADMIN', 'MANAGER', 'STOCK_MANAGER')
+  createOrder(
+    @Body() dto: CreatePurchaseOrderDto,
+    @GetUser() user?: { id?: number },
+  ) {
+    return this.purchasingService.createPurchaseOrder(dto, user?.id);
+  }
+
+  @Get('orders')
+  @Roles('ADMIN', 'MANAGER', 'STOCK_MANAGER')
+  listOrders(@Query('companyId') companyId?: string) {
+    const n = companyId ? Number(companyId) : undefined;
+    return this.purchasingService.listPurchaseOrders(
+      n !== undefined && Number.isFinite(n) && n > 0 ? n : undefined,
+    );
+  }
+
+  @Get('orders/:id')
+  @Roles('ADMIN', 'MANAGER', 'STOCK_MANAGER')
+  getOrder(@Param('id', ParseIntPipe) id: number) {
+    return this.purchasingService.getPurchaseOrder(id);
+  }
+
+  @Post('receipts')
+  @Roles('ADMIN', 'MANAGER', 'STOCK_MANAGER')
+  createReceipt(
+    @Body() dto: CreateGoodsReceiptDto,
+    @GetUser() user?: { id?: number },
+  ) {
+    return this.purchasingService.createGoodsReceipt(dto, user?.id);
+  }
+
+  @Get('receipts')
+  @Roles('ADMIN', 'MANAGER', 'STOCK_MANAGER')
+  listReceipts(@Query('departmentId') departmentId?: string) {
+    const n = departmentId ? Number(departmentId) : undefined;
+    return this.purchasingService.listGoodsReceipts(
+      n !== undefined && Number.isFinite(n) && n > 0 ? n : undefined,
+    );
+  }
+
+  @Get('receipts/:id')
+  @Roles('ADMIN', 'MANAGER', 'STOCK_MANAGER')
+  getReceipt(@Param('id', ParseIntPipe) id: number) {
+    return this.purchasingService.getGoodsReceipt(id);
+  }
+
+  @Post('receipts/:id/post')
+  @Roles('ADMIN', 'MANAGER', 'STOCK_MANAGER')
+  postReceipt(
+    @Param('id', ParseIntPipe) id: number,
+    @GetUser() user?: { id?: number },
+  ) {
+    return this.purchasingService.postGoodsReceipt(id, user?.id);
+  }
+}

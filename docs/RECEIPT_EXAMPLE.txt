@@ -1,0 +1,15 @@
+POS Freres Basiles
+Adresse magasin
+--------------------------------
+Caissier: User#12
+Date: 2026-03-24 11:02
+--------------------------------
+Riz 25kg x1
+  23000.00 x 1 = 23000.00
+Huile 5L x2
+  8500.00 x 2 = 17000.00
+--------------------------------
+TOTAL: 40000.00
+Paiement: SPLIT
+--------------------------------
+Merci pour votre visite

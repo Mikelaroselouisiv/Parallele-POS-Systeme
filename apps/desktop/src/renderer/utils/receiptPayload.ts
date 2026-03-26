@@ -1,0 +1,55 @@
+import type { CompanyProfile, DepartmentPrinterSettings, Sale } from '../types/api';
+
+export function paymentModeFromSale(sale: Sale): string {
+  const pays = sale.payments ?? [];
+  if (pays.length === 0) return 'N/A';
+  if (pays.length === 1) return pays[0].method;
+  return 'SPLIT';
+}
+
+export function cashierLabelFromSale(sale: Sale): string {
+  return (
+    sale.user?.fullName?.trim() ||
+    sale.cashier ||
+    (sale.user?.phone ? `Tel ${sale.user.phone}` : 'N/A')
+  );
+}
+
+/**
+ * Même structure que `window.desktopApp.printReceipt` au moment de l’encaissement (PosPage).
+ */
+export function buildReceiptPayloadFromSale(
+  sale: Sale,
+  company: CompanyProfile | null,
+  printer: DepartmentPrinterSettings | null,
+) {
+  const items = (sale.items ?? []).map((it) => ({
+    name: it.lineLabel ?? it.product?.name ?? 'Article',
+    qty: Number(it.quantity),
+    price: Number(it.unitPrice),
+  }));
+  const total = Number(sale.total);
+  const paperWidth: 58 | 80 = printer?.paperWidth === 80 ? 80 : 58;
+  return {
+    saleId: sale.id,
+    companyName: company?.name ?? 'Entreprise',
+    companyPhone: company?.phone ?? null,
+    address: [company?.address, company?.city].filter(Boolean).join(', ') || '',
+    cashier: cashierLabelFromSale(sale),
+    dateTime: new Date(sale.createdAt).toLocaleString(),
+    receiptClientName: sale.clientName && sale.clientName.trim() ? sale.clientName.trim() : null,
+    items,
+    total,
+    paymentMode: paymentModeFromSale(sale),
+    paperWidth,
+    printerName: printer?.deviceName ?? '',
+    receiptHeaderText: printer?.receiptHeaderText ?? null,
+    receiptFooterText: printer?.receiptFooterText ?? null,
+    receiptLogoUrl: printer?.receiptLogoUrl ?? null,
+    showLogoOnReceipt: printer?.showLogoOnReceipt ?? true,
+    autoCut: printer?.autoCut ?? true,
+  };
+}
+
+/** Même structure que le payload d’impression thermique / `printReceipt`. */
+export type ReceiptPrintPayload = ReturnType<typeof buildReceiptPayloadFromSale>;

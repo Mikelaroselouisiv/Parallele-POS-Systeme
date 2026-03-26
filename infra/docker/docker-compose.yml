@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: pos_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pos_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ../../apps/backend
+      dockerfile: ../../infra/docker/Dockerfile
+    container_name: pos_backend
+    restart: unless-stopped
+    env_file:
+      - ../../apps/backend/.env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/pos_db?schema=public
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
