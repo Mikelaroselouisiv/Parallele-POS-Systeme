@@ -1,8 +1,19 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
+const fs = require('fs');
 const path = require('path');
 const { printReceipt } = require('./thermal-printer.cjs');
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
+
+function resolveWindowIcon() {
+  /** Source unique : monorepo `assets/icons/icon.png` (voir README desktop). */
+  const fromRepo = path.join(__dirname, '../../../../assets/icons/icon.png');
+  if (fs.existsSync(fromRepo)) return fromRepo;
+  const devPublic = path.join(__dirname, '../../public/icon.png');
+  const prodDist = path.join(__dirname, '../../dist/icon.png');
+  const p = isDev ? devPublic : prodDist;
+  return fs.existsSync(p) ? p : undefined;
+}
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -10,7 +21,8 @@ function createWindow() {
     height: 800,
     minWidth: 1024,
     minHeight: 680,
-    title: 'POS Desktop',
+    title: 'POS Frères Basiles',
+    icon: resolveWindowIcon(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -31,6 +43,11 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  app.setName('POS Frères Basiles');
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.freresbasiles.pos.desktop');
+  }
+
   ipcMain.handle('printer:print-receipt', async (_event, saleData) => printReceipt(saleData));
   ipcMain.handle('printer:list', async () => {
     const win = BrowserWindow.getAllWindows()[0];

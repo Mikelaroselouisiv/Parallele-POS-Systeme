@@ -1,4 +1,5 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { BrandLogo } from '../components/BrandLogo';
 import { useAuth } from '../context/AuthContext';
 import type { UserRole } from '../types/api';
 
@@ -19,7 +20,7 @@ export function AppLayout() {
     <div className="app-shell">
       <aside className="app-sidebar">
         <div className="app-brand">
-          <span className="app-brand-mark">POS</span>
+          <BrandLogo size={40} />
           <span className="app-brand-text">Frères Basiles</span>
         </div>
         <nav className="app-nav">

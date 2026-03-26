@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getToken } from '../services/api';
+import { BrandLogo } from '../components/BrandLogo';
 import { PasswordField } from '../components/PasswordField';
 
 export function LoginPage() {
@@ -30,6 +31,9 @@ export function LoginPage() {
   return (
     <main className="login-page">
       <div className="auth-card card">
+        <div className="login-brand">
+          <BrandLogo size={72} />
+        </div>
         <h1 className="login-title">Connexion</h1>
         <p className="login-sub">Point de vente — accès sécurisé par rôle</p>
         <form className="form-grid" onSubmit={(e) => void onSubmit(e)}>
