@@ -58,19 +58,39 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push
+      - name: Check ECR configuration
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || secrets.ECR_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          echo "AWS region: $AWS_REGION"
+          echo "ECR registry: $ECR_REGISTRY"
+          echo "ECR repository name: ${ECR_REPOSITORY:-<empty>}"
+          if [ -z "${ECR_REPOSITORY:-}" ]; then
+            echo "::error::Set repository variable or secret ECR_REPOSITORY (e.g. freresbasilespos)."
+            exit 1
+          fi
+
+      - name: Docker build (backend image)
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || secrets.ECR_REPOSITORY }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          if [ -z "$ECR_REPOSITORY" ]; then
-            echo "Définissez la variable repository ECR_REPOSITORY (nom du repo, ex. pos-backend)."
-            exit 1
-          fi
+          set -euo pipefail
           docker build -f infra/docker/Dockerfile \
+            --progress=plain \
             -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
             -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" \
             apps/backend
+
+      - name: Push image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || secrets.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
