@@ -10,6 +10,7 @@ yarn-error.log*
 
 # Backend env
 apps/backend/.env
+infra/docker/.env.ec2
 
 # OS / IDE
 Thumbs.db
