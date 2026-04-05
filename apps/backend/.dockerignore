@@ -1,3 +1,4 @@
+# Contexte Docker CI / ECR
 node_modules
 dist
 coverage
