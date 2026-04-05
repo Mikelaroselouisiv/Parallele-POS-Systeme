@@ -20,6 +20,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./
 COPY --from=deps /app/node_modules ./node_modules
+# Le client Prisma valide est généré dans `builder` (schéma présent) ; `deps` n’a que le stub post-install.
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 EXPOSE 3000

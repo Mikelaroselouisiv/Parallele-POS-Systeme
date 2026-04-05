@@ -55,9 +55,29 @@ Backend API modulaire pour un systeme POS professionnel.
 
 ## Lancement Docker
 
-1. `docker compose -f ../../infra/docker/docker-compose.yml up --build`
+Fichier unique : `infra/docker/docker-compose.yml`.
+
+1. Depuis la racine du monorepo : `cd infra/docker && docker compose up --build -d`  
+   (ou depuis `apps/backend` : `docker compose -f ../../infra/docker/docker-compose.yml up --build -d`)
 2. Dans un second terminal:
    - `docker exec -it pos_backend npx prisma db seed`
+
+## Production locale (image ECR, sans build)
+
+Fichier `infra/docker/docker-compose.prod.yml`. Sur la machine : AWS CLI + droits ECR, Docker.
+
+```bash
+cd infra/docker
+cp .env.prod.example .env.prod
+# éditer .env.prod (JWT_SECRET)
+
+aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 421983920969.dkr.ecr.us-east-2.amazonaws.com
+
+docker compose -f docker-compose.prod.yml --env-file .env.prod pull
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+```
+
+Conteneurs : `pos_postgres_prod`, `pos_backend_prod` (API port 3000).
 
 ## Seed admin par defaut
 

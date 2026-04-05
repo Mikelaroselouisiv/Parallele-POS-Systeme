@@ -10,7 +10,7 @@ yarn-error.log*
 
 # Backend env
 apps/backend/.env
-infra/docker/.env.ec2
+infra/docker/.env.prod
 
 # SSH / keys
 *.pem

@@ -1,3 +1,13 @@
+# Développement / build local : Postgres + backend (image buildée depuis apps/backend).
+# Production avec image ECR : voir docker-compose.prod.yml.
+#
+# Prérequis : apps/backend/.env (au minimum JWT_SECRET ; le DATABASE_URL du fichier est surchargé ici pour le réseau Docker).
+#
+#   cd infra/docker && docker compose up --build -d
+#
+#   # ou depuis apps/backend :
+#   docker compose -f ../../infra/docker/docker-compose.yml up --build -d
+
 services:
   postgres:
     image: postgres:16
