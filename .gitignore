@@ -12,6 +12,9 @@ yarn-error.log*
 apps/backend/.env
 infra/docker/.env.ec2
 
+# SSH / keys
+*.pem
+
 # OS / IDE
 Thumbs.db
 .env.local
