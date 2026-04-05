@@ -1,0 +1,76 @@
+# Build l’image Docker du backend et la pousse vers Amazon ECR.
+#
+# Configuration GitHub (Settings → Secrets and variables → Actions) :
+#
+# Variables ou secrets (repository) :
+#   - AWS_REGION          : ex. us-east-2 (variable ou secret)
+#   - ECR_REPOSITORY      : nom du dépôt ECR uniquement (ex. freresbasilespos)
+#   - AWS_AUTH_MODE       : optionnel — "oidc" pour OIDC GitHub, autre valeur ou absent = clés IAM
+#
+# Secrets :
+#   - Si AWS_AUTH_MODE = oidc : AWS_ROLE_ARN (ARN du rôle IAM avec trust GitHub OIDC + ECR push)
+#   - Sinon : AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (utilisateur IAM avec ecr:GetAuthorizationToken,
+#             ecr:BatchCheckLayerAvailability, ecr:PutImage, ecr:InitiateLayerUpload, ecr:UploadLayerPart,
+#             ecr:CompleteLayerUpload, ecr:BatchGetImage sur le repo cible)
+
+name: Backend — build & push ECR
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/backend/**'
+      - 'infra/docker/Dockerfile'
+      - '.github/workflows/backend-ecr.yml'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || secrets.AWS_REGION || 'us-east-2' }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || secrets.ECR_REPOSITORY }}
+
+jobs:
+  build-and-push:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        if: ${{ vars.AWS_AUTH_MODE == 'oidc' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure AWS credentials (clés IAM)
+        if: ${{ vars.AWS_AUTH_MODE != 'oidc' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || secrets.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          if [ -z "$ECR_REPOSITORY" ]; then
+            echo "Définissez la variable repository ECR_REPOSITORY (nom du repo, ex. pos-backend)."
+            exit 1
+          fi
+          docker build -f infra/docker/Dockerfile \
+            -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" \
+            apps/backend
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"

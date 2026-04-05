@@ -1,0 +1,15 @@
+node_modules
+dist
+coverage
+.git
+.gitignore
+*.md
+.env
+.env.*
+.env.local
+*.log
+npm-debug.log*
+.DS_Store
+test
+*.spec.ts
+jest.config.*
