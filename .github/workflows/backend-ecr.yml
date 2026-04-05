@@ -1,17 +1,6 @@
-# Build l’image Docker du backend et la pousse vers Amazon ECR.
-#
-# Configuration GitHub (Settings → Secrets and variables → Actions) :
-#
-# Variables ou secrets (repository) :
-#   - AWS_REGION          : ex. us-east-2 (variable ou secret)
-#   - ECR_REPOSITORY      : nom du dépôt ECR uniquement (ex. freresbasilespos)
-#   - AWS_AUTH_MODE       : optionnel — "oidc" pour OIDC GitHub, autre valeur ou absent = clés IAM
-#
-# Secrets :
-#   - Si AWS_AUTH_MODE = oidc : AWS_ROLE_ARN (ARN du rôle IAM avec trust GitHub OIDC + ECR push)
-#   - Sinon : AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (utilisateur IAM avec ecr:GetAuthorizationToken,
-#             ecr:BatchCheckLayerAvailability, ecr:PutImage, ecr:InitiateLayerUpload, ecr:UploadLayerPart,
-#             ecr:CompleteLayerUpload, ecr:BatchGetImage sur le repo cible)
+# Build Docker backend → push to Amazon ECR.
+# Secrets requis : AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (IAM avec droits ECR sur ce compte).
+# Optionnel : variables repo AWS_REGION / ECR_REPOSITORY pour surcharger les défauts ci‑dessous.
 
 name: Backend — build & push ECR
 
@@ -25,29 +14,18 @@ on:
   workflow_dispatch:
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION || secrets.AWS_REGION || 'us-east-2' }}
-  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || secrets.ECR_REPOSITORY }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'freresbasilespos' }}
 
 jobs:
   build-and-push:
-    name: Build & push image
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
       contents: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials (OIDC)
-        if: ${{ vars.AWS_AUTH_MODE == 'oidc' }}
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Configure AWS credentials (clés IAM)
-        if: ${{ vars.AWS_AUTH_MODE != 'oidc' }}
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -58,39 +36,15 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Check ECR configuration
+      - name: Build and push
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || secrets.ECR_REPOSITORY }}
-        run: |
-          set -euo pipefail
-          echo "AWS region: $AWS_REGION"
-          echo "ECR registry: $ECR_REGISTRY"
-          echo "ECR repository name: ${ECR_REPOSITORY:-<empty>}"
-          if [ -z "${ECR_REPOSITORY:-}" ]; then
-            echo "::error::Set repository variable or secret ECR_REPOSITORY (e.g. freresbasilespos)."
-            exit 1
-          fi
-
-      - name: Docker build (backend image)
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || secrets.ECR_REPOSITORY }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           set -euo pipefail
           docker build -f infra/docker/Dockerfile \
-            --progress=plain \
             -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
             -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" \
             apps/backend
-
-      - name: Push image to ECR
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || secrets.ECR_REPOSITORY }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          set -euo pipefail
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
