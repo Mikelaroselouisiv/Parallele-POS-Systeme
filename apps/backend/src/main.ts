@@ -13,8 +13,11 @@ async function bootstrap() {
   app.use(json({ limit: JSON_BODY_LIMIT }));
   app.use(urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
   const configService = app.get(ConfigService);
+  // `origin: true` reflète l’Origin du client — nécessaire pour l’app Electron installée (pas seulement localhost:5173).
+  // L’accès reste protégé par JWT ; resserrer avec une liste blanche si besoin (variable CORS_ORIGINS).
+  const corsOrigins = process.env.CORS_ORIGINS?.split(',').map((s) => s.trim()).filter(Boolean);
   app.enableCors({
-    origin: ['http://localhost:5173'],
+    origin: corsOrigins?.length ? corsOrigins : true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,

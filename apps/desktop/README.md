@@ -1,17 +1,17 @@
 # POS Desktop (Electron + React)
 
-Application desktop POS dans `apps/desktop`, connectee au backend NestJS via **`VITE_API_URL`** (voir ci-dessous).
+Application desktop POS dans `apps/desktop`, connectee au backend NestJS (voir **`src/renderer/config/public-api.ts`**).
 
 ## URL du backend (dev vs prod)
 
-- **Développement** : le fichier **`.env.development`** fixe `VITE_API_URL=http://localhost:3000` — l’Electron parle au **Nest lancé sur ta machine** (pas à l’image sur l’EC2, tant que tu n’as pas changé cette variable).
-- **Build installable / prod** : définir `VITE_API_URL` vers ton API déployée (ex. `http://IP_EC2:3000` ou un domaine HTTPS) dans `.env.production` ou les variables d’environnement du build. Copier **`.env.example`** comme modèle.
+- **Production (installateur / `vite build`)** : constante **`PUBLIC_API_BASE_URL`** dans **`src/renderer/config/public-api.ts`** (IP ou domaine du serveur déployé). C’est l’endroit unique à modifier si l’URL change.
+- **Développement** (`npm run dev`) : **`http://localhost:3000`** par défaut (Nest local), sans configuration.
+- **Surcharge optionnelle** : variable **`VITE_API_URL`** au build (CI, test) — voir `.env.production.example`.
 
 ### Mode semi-autonome (SQLite)
 
 - Fichier **`pos-local.sqlite`** dans le répertoire utilisateur de l’app (Electron `userData`) : **file d’attente des ventes** hors ligne + **cache du catalogue** produits.
 - Au retour réseau, la file est synchronisée vers l’API (`POST /sales`). Le badge **« N hors ligne »** dans la barre latérale indique les ventes en attente.
-- En développement, **`VITE_API_URL`** reste sur `localhost:3000` (`.env.development`). Pour un build pointant vers l’EC2, définir **`VITE_API_URL`** au moment du build (voir `.env.production.example`).
 
 La persistance utilise **sql.js** (SQLite compilé en WebAssembly, sans module natif à compiler).
 
@@ -32,7 +32,10 @@ La persistance utilise **sql.js** (SQLite compilé en WebAssembly, sans module n
 - `npm install`
 - `npm run dev` : lance Vite + Electron en mode developpement
 - `npm run build` : build React renderer
-- `npm run start` : lance Electron en mode local
+- `npm run start` : lance Electron en mode local (après `npm run build`)
+- **`npm run dist:win`** : build + **installateur Windows** (`release/POS Frères Basiles Setup x.x.x.exe`). Sans certificat de signature : `forceCodeSigning` est désactivé dans `package.json` (Windows peut afficher « éditeur inconnu »).
+
+Pour un autre serveur que celui défini dans `public-api.ts`, modifie **`PUBLIC_API_BASE_URL`** ou utilise **`VITE_API_URL`** au build, puis `npm run dist:win`.
 
 ## Fonctionnalites POS incluses
 

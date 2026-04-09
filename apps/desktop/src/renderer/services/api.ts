@@ -23,9 +23,11 @@ import type {
   ProductRecipeDetail,
   PurchaseOrderListItem,
 } from '../types/api';
+import { PUBLIC_API_BASE_URL } from '../config/public-api';
 
-/** Défini au build via `VITE_API_URL` (.env, .env.production). Défaut = backend local (pas l’EC2). */
-const API_BASE_URL = (import.meta.env.VITE_API_URL?.trim() || 'http://localhost:3000') as string;
+/** Prod (build) : `PUBLIC_API_BASE_URL` ; dev : localhost. Surcharge optionnelle : `VITE_API_URL` au build. */
+const API_BASE_URL = (import.meta.env.VITE_API_URL?.trim() ||
+  (import.meta.env.PROD ? PUBLIC_API_BASE_URL : 'http://localhost:3000')) as string;
 const TOKEN_KEY = 'pos_token';
 const REFRESH_TOKEN_KEY = 'pos_refresh_token';
 const USER_KEY = 'pos_user';

@@ -1,7 +1,10 @@
 {
   "name": "desktop",
+  "productName": "POS Frères Basiles",
+  "description": "Point de vente — application desktop",
+  "author": "Frères Basiles",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "main": "src/main/main.cjs",
   "scripts": {
@@ -10,6 +13,7 @@
     "dev:electron": "wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
     "start": "electron .",
     "build": "tsc -b && vite build",
+    "dist:win": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --x64",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -31,6 +35,7 @@
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^41.0.3",
+    "electron-builder": "^26.0.12",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
@@ -39,5 +44,38 @@
     "typescript-eslint": "^8.57.0",
     "vite": "^8.0.1",
     "wait-on": "^9.0.4"
+  },
+  "build": {
+    "appId": "com.freresbasiles.pos.desktop",
+    "productName": "POS Frères Basiles",
+    "copyright": "Copyright © 2026",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "src/main/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/sql.js/**"
+    ],
+    "win": {
+      "forceCodeSigning": false,
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
   }
 }
