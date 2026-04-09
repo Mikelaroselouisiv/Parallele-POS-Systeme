@@ -28,6 +28,8 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      // Installateur (file://) → API distante : sans ça, Chromium peut bloquer les appels HTTP.
+      webSecurity: isDev,
     },
   });
 

@@ -37,6 +37,12 @@ La persistance utilise **sql.js** (SQLite compilé en WebAssembly, sans module n
 
 Pour un autre serveur que celui défini dans `public-api.ts`, modifie **`PUBLIC_API_BASE_URL`** ou utilise **`VITE_API_URL`** au build, puis `npm run dist:win`.
 
+### L’installateur ne joint pas l’API (EC2)
+
+1. **Security group AWS** : autoriser le trafic **entrant TCP 3000** vers l’instance (depuis ton IP ou `0.0.0.0/0` pour test). Sans cette règle, rien n’atteint Nest depuis ton PC.
+2. Vérifier dans le navigateur : `http://TON_IP:3000/auth/setup-status` doit afficher du JSON.
+3. Rebuild l’exe seulement si tu changes le code Electron ou l’URL dans `public-api.ts`.
+
 ## Fonctionnalites POS incluses
 
 - Login utilisateur (`/auth/login`)
