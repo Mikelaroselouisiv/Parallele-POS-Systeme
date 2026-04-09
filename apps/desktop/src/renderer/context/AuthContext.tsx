@@ -13,6 +13,7 @@ import {
   getToken,
   login as apiLogin,
   logout as apiLogout,
+  registerFirstAdmin as apiRegisterFirstAdmin,
   writeSessionUser,
 } from '../services/api';
 import type { SessionUser, UserRole } from '../types/api';
@@ -21,6 +22,12 @@ type AuthContextValue = {
   user: SessionUser | null;
   loading: boolean;
   login: (phone: string, password: string) => Promise<void>;
+  registerFirstAdmin: (payload: {
+    phone: string;
+    password: string;
+    email?: string;
+    fullName?: string;
+  }) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
   can: (roles: UserRole[]) => boolean;
@@ -72,6 +79,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     writeSessionUser(res.user);
   }, []);
 
+  const registerFirstAdmin = useCallback(
+    async (payload: { phone: string; password: string; email?: string; fullName?: string }) => {
+      const res = await apiRegisterFirstAdmin(payload);
+      setUser(res.user);
+      writeSessionUser(res.user);
+    },
+    [],
+  );
+
   const logout = useCallback(() => {
     apiLogout();
     setUser(null);
@@ -86,8 +102,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ user, loading, login, logout, refreshUser, can }),
-    [user, loading, login, logout, refreshUser, can],
+    () => ({ user, loading, login, registerFirstAdmin, logout, refreshUser, can }),
+    [user, loading, login, registerFirstAdmin, logout, refreshUser, can],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

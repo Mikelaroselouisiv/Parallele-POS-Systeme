@@ -3,60 +3,56 @@ import { PrismaClient, Role } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-/** Identifiants de connexion (téléphone + mot de passe) pour le premier admin ou après migration « legacy_* ». */
-const ADMIN_PHONE = '+2250100000000';
-const ADMIN_PASSWORD = 'admin1234';
+/**
+ * Aucun utilisateur par défaut : le premier admin est créé via POST /auth/register (base vide)
+ * ou via l’écran « Configuration initiale » de l’app Electron.
+ *
+ * FORCE_ADMIN_RESET=1 : réinitialise le téléphone + mot de passe du premier compte ADMIN trouvé
+ * (secours uniquement — définir ADMIN_PHONE / ADMIN_PASSWORD dans l’environnement si besoin).
+ */
+const ADMIN_PHONE = process.env.SEED_ADMIN_PHONE ?? '+2250100000000';
+const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? 'admin1234';
 const FORCE_ADMIN_RESET = process.env.FORCE_ADMIN_RESET === '1';
 
 async function main() {
-  const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 10);
-
-  const already = await prisma.user.findFirst({ where: { phone: ADMIN_PHONE } });
-  if (already) {
-    console.log(`Seed: un utilisateur avec ${ADMIN_PHONE} existe déjà — rien à faire.`);
+  if (!FORCE_ADMIN_RESET) {
+    console.log(
+      'Seed: pas de compte créé automatiquement — utilisez la configuration initiale (premier utilisateur = admin).',
+    );
     return;
   }
 
+  const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 10);
   const firstAdmin = await prisma.user.findFirst({
     where: { role: Role.ADMIN },
     orderBy: { id: 'asc' },
   });
 
-  if (firstAdmin && FORCE_ADMIN_RESET) {
-    await prisma.user.update({
-      where: { id: firstAdmin.id },
+  if (!firstAdmin) {
+    await prisma.user.create({
       data: {
         phone: ADMIN_PHONE,
+        email: 'admin@pos.local',
         password: passwordHash,
-        email: firstAdmin.email ?? 'admin@pos.local',
-        isActive: true,
+        role: Role.ADMIN,
       },
     });
-    console.log(
-      `Seed: compte admin (id ${firstAdmin.id}) mis à jour — téléphone ${ADMIN_PHONE}, mot de passe: ${ADMIN_PASSWORD}`,
-    );
+    console.log(`Seed (FORCE_ADMIN_RESET): admin créé — ${ADMIN_PHONE} / ${ADMIN_PASSWORD}`);
     return;
   }
 
-  if (firstAdmin) {
-    console.log(
-      `Seed: admin existant détecté (id ${firstAdmin.id}, téléphone ${firstAdmin.phone}) — pas de modification.`,
-    );
-    console.log(
-      'Seed: pour forcer une réinitialisation admin, relancez avec FORCE_ADMIN_RESET=1.',
-    );
-    return;
-  }
-
-  await prisma.user.create({
+  await prisma.user.update({
+    where: { id: firstAdmin.id },
     data: {
       phone: ADMIN_PHONE,
-      email: 'admin@pos.local',
       password: passwordHash,
-      role: Role.ADMIN,
+      email: firstAdmin.email ?? 'admin@pos.local',
+      isActive: true,
     },
   });
-  console.log(`Seed: admin créé — ${ADMIN_PHONE} / ${ADMIN_PASSWORD}`);
+  console.log(
+    `Seed (FORCE_ADMIN_RESET): admin id ${firstAdmin.id} — ${ADMIN_PHONE} / ${ADMIN_PASSWORD}`,
+  );
 }
 
 main()

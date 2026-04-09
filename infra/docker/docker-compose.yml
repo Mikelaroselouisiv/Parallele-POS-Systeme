@@ -1,41 +1,26 @@
-# Développement / build local : Postgres + backend (image buildée depuis apps/backend).
-# Production avec image ECR : voir docker-compose.prod.yml.
+# Développement : uniquement le backend en conteneur. La base est PostgreSQL sur l’EC2
+# (compose prod), joignable via tunnel SSH sur la machine hôte (port 15432 par défaut).
 #
-# Prérequis : apps/backend/.env (au minimum JWT_SECRET ; le DATABASE_URL du fichier est surchargé ici pour le réseau Docker).
+# 1) Terminal : infra/scripts/ec2-db-tunnel.ps1 (ou .sh) — laisser ouvert
+# 2) cd infra/docker && docker compose up --build -d
 #
-#   cd infra/docker && docker compose up --build -d
+# Sans Docker : dans apps/backend, npm run start:dev (même DATABASE_URL sur 127.0.0.1:15432).
 #
-#   # ou depuis apps/backend :
-#   docker compose -f ../../infra/docker/docker-compose.yml up --build -d
+# Production / stack complet sur une machine : docker-compose.prod.yml
 
 services:
-  postgres:
-    image: postgres:16
-    container_name: pos_postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: pos_db
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
   backend:
     build:
       context: ../../apps/backend
       dockerfile: ../../infra/docker/Dockerfile
     container_name: pos_backend
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - ../../apps/backend/.env
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/pos_db?schema=public
+      # Contournement : depuis le conteneur, l’hôte = host.docker.internal (tunnel sur 15432).
+      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:15432/pos_db?schema=public
     ports:
       - "3000:3000"
-    depends_on:
-      - postgres
-
-volumes:
-  postgres_data:

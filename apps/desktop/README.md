@@ -1,6 +1,19 @@
 # POS Desktop (Electron + React)
 
-Application desktop POS dans `apps/desktop`, connectee au backend NestJS sur `http://localhost:3000`.
+Application desktop POS dans `apps/desktop`, connectee au backend NestJS via **`VITE_API_URL`** (voir ci-dessous).
+
+## URL du backend (dev vs prod)
+
+- **Développement** : le fichier **`.env.development`** fixe `VITE_API_URL=http://localhost:3000` — l’Electron parle au **Nest lancé sur ta machine** (pas à l’image sur l’EC2, tant que tu n’as pas changé cette variable).
+- **Build installable / prod** : définir `VITE_API_URL` vers ton API déployée (ex. `http://IP_EC2:3000` ou un domaine HTTPS) dans `.env.production` ou les variables d’environnement du build. Copier **`.env.example`** comme modèle.
+
+### Mode semi-autonome (SQLite)
+
+- Fichier **`pos-local.sqlite`** dans le répertoire utilisateur de l’app (Electron `userData`) : **file d’attente des ventes** hors ligne + **cache du catalogue** produits.
+- Au retour réseau, la file est synchronisée vers l’API (`POST /sales`). Le badge **« N hors ligne »** dans la barre latérale indique les ventes en attente.
+- En développement, **`VITE_API_URL`** reste sur `localhost:3000` (`.env.development`). Pour un build pointant vers l’EC2, définir **`VITE_API_URL`** au moment du build (voir `.env.production.example`).
+
+La persistance utilise **sql.js** (SQLite compilé en WebAssembly, sans module natif à compiler).
 
 ## Logo & identité visuelle
 

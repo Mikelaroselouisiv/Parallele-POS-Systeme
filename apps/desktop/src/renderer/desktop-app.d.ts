@@ -27,6 +27,14 @@ declare global {
         previewSampleBody?: string | null;
       }) => Promise<{ ok: boolean; mode: string; reason?: string; ticketText?: string }>;
       listPrinters?: () => Promise<Array<{ name: string }>>;
+      /** SQLite local (file d’attente ventes + cache catalogue). */
+      localDb?: {
+        outboxEnqueue: (payload: unknown) => Promise<string>;
+        outboxList: () => Promise<Array<{ id: string; payload: unknown }>>;
+        outboxRemove: (id: string) => Promise<void>;
+        cacheSet: (key: string, json: string) => Promise<void>;
+        cacheGet: (key: string) => Promise<string | null>;
+      };
     };
   }
 }

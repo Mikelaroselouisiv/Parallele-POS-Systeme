@@ -155,11 +155,23 @@ select {
 
 .app-brand {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.65rem;
+  gap: 0.5rem 0.65rem;
   padding: 0.5rem 0.75rem 1.25rem;
   border-bottom: 1px solid #1e293b;
   margin-bottom: 0.75rem;
+}
+
+.app-offline-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.2rem 0.45rem;
+  border-radius: 6px;
+  background: #b45309;
+  color: #fff;
+  width: 100%;
+  text-align: center;
 }
 
 .brand-logo-img {

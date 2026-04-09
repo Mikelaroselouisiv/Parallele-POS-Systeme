@@ -6,9 +6,10 @@ import {
   getCompanies,
   getDepartments,
   getPrinterSettings,
-  getProducts,
 } from '../services/api';
+import { isLikelyNetworkError } from '../services/api-errors';
 import { enqueueSale, syncSalesQueue } from '../services/offline-queue';
+import { loadProductsWithCache } from '../services/product-cache';
 import type {
   CompanyListItem,
   CompanyProfile,
@@ -104,7 +105,7 @@ export function PosPage() {
 
     if (isCashier) {
       void Promise.all([
-        getProducts(deptId),
+        loadProductsWithCache(deptId),
         getCompany(),
         getPrinterSettings(deptId),
       ])
@@ -119,7 +120,7 @@ export function PosPage() {
 
     void (async () => {
       try {
-        const [allProds, companyList] = await Promise.all([getProducts(), getCompanies()]);
+        const [allProds, companyList] = await Promise.all([loadProductsWithCache(undefined), getCompanies()]);
         setProducts(allProds);
         setCompanies(companyList);
 
@@ -208,7 +209,10 @@ export function PosPage() {
   useEffect(() => {
     void syncSalesQueue()
       .then((r) => {
-        if (r.synced > 0) setStatus(`Synchronisé : ${r.synced} vente(s) hors ligne`);
+        if (r.synced > 0) {
+          setStatus(`Synchronisé : ${r.synced} vente(s) hors ligne`);
+          window.dispatchEvent(new Event('pos-pending-sales-changed'));
+        }
       })
       .catch(() => undefined);
   }, []);
@@ -376,7 +380,8 @@ export function PosPage() {
     };
     try {
       if (!navigator.onLine) {
-        enqueueSale(payload);
+        await enqueueSale(payload);
+        window.dispatchEvent(new Event('pos-pending-sales-changed'));
         setStatus('Hors ligne : vente mise en file d’attente');
         removeActiveDraftFromUI();
         return;
@@ -412,12 +417,19 @@ export function PosPage() {
       removeActiveDraftFromUI();
       const deptId = typeof user?.departmentId === 'number' ? user.departmentId : undefined;
       if (isCashier) {
-        setProducts(await getProducts(deptId));
+        setProducts(await loadProductsWithCache(deptId));
       } else {
-        setProducts(await getProducts());
+        setProducts(await loadProductsWithCache(undefined));
       }
-    } catch {
-      setStatus('Échec vente (stock ou réseau)', { persist: true });
+    } catch (e) {
+      if (isLikelyNetworkError(e) || !navigator.onLine) {
+        await enqueueSale(payload);
+        window.dispatchEvent(new Event('pos-pending-sales-changed'));
+        setStatus('Réseau indisponible : vente mise en file d’attente');
+        removeActiveDraftFromUI();
+        return;
+      }
+      setStatus('Échec vente (stock ou données)', { persist: true });
     }
   }
 

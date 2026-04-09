@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { printReceipt } = require('./thermal-printer.cjs');
+const localDb = require('./local-db.cjs');
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 
@@ -42,11 +43,23 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   app.setName('POS Frères Basiles');
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.freresbasiles.pos.desktop');
   }
+
+  await localDb.initLocalDb(app.getPath('userData'));
+
+  ipcMain.handle('localdb:outboxEnqueue', (_e, payload) => localDb.outboxEnqueue(payload));
+  ipcMain.handle('localdb:outboxList', () => localDb.outboxList());
+  ipcMain.handle('localdb:outboxRemove', (_e, id) => {
+    localDb.outboxRemove(id);
+  });
+  ipcMain.handle('localdb:cacheSet', (_e, { key, json }) => {
+    localDb.cacheSet(key, json);
+  });
+  ipcMain.handle('localdb:cacheGet', (_e, key) => localDb.cacheGet(key));
 
   ipcMain.handle('printer:print-receipt', async (_event, saleData) => printReceipt(saleData));
   ipcMain.handle('printer:list', async () => {

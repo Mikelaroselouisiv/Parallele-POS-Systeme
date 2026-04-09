@@ -24,7 +24,8 @@ import type {
   PurchaseOrderListItem,
 } from '../types/api';
 
-const API_BASE_URL = 'http://localhost:3000';
+/** Défini au build via `VITE_API_URL` (.env, .env.production). Défaut = backend local (pas l’EC2). */
+const API_BASE_URL = (import.meta.env.VITE_API_URL?.trim() || 'http://localhost:3000') as string;
 const TOKEN_KEY = 'pos_token';
 const REFRESH_TOKEN_KEY = 'pos_refresh_token';
 const USER_KEY = 'pos_user';
@@ -43,6 +44,24 @@ api.interceptors.request.use((config) => {
 
 export async function login(phone: string, password: string): Promise<LoginResponse> {
   const { data } = await api.post<LoginResponse>('/auth/login', { phone, password });
+  writeToken(data.accessToken);
+  writeRefreshToken(data.refreshToken);
+  writeSessionUser(data.user);
+  return data;
+}
+
+export async function getAuthSetupStatus(): Promise<{ needsFirstUser: boolean }> {
+  const { data } = await api.get<{ needsFirstUser: boolean }>('/auth/setup-status');
+  return data;
+}
+
+export async function registerFirstAdmin(payload: {
+  phone: string;
+  password: string;
+  email?: string;
+  fullName?: string;
+}): Promise<LoginResponse> {
+  const { data } = await api.post<LoginResponse>('/auth/register', payload);
   writeToken(data.accessToken);
   writeRefreshToken(data.refreshToken);
   writeSessionUser(data.user);

@@ -1,0 +1,20 @@
+# Option : Postgres uniquement sur la machine de dev (sans EC2). Ancien comportement.
+# Usage : docker compose -f docker-compose.local-postgres.yml up -d
+# Puis dans apps/backend/.env : DATABASE_URL=postgresql://postgres:postgres@localhost:5432/pos_db?schema=public
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: pos_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pos_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_local:/var/lib/postgresql/data
+
+volumes:
+  postgres_data_local:

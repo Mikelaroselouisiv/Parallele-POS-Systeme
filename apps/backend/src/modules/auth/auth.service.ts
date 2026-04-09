@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { Role } from '@prisma/client';
@@ -19,8 +19,30 @@ export class AuthService {
     private readonly auditService: AuditService,
   ) {}
 
+  /** True tant qu’aucun utilisateur n’existe (première installation). */
+  async getSetupStatus() {
+    const count = await this.prisma.user.count();
+    return { needsFirstUser: count === 0 };
+  }
+
+  /**
+   * Premier compte = administrateur (base vide). Ensuite : 403 — les comptes sont créés par un admin (POST /users).
+   */
   async register(registerDto: RegisterDto) {
-    const user = await this.usersService.create({ ...registerDto, role: Role.CASHIER });
+    const existingCount = await this.prisma.user.count();
+    if (existingCount > 0) {
+      throw new ForbiddenException(
+        "L'inscription publique est fermée. Connectez-vous ou demandez à un administrateur de créer votre compte.",
+      );
+    }
+
+    const user = await this.usersService.create({
+      phone: registerDto.phone,
+      password: registerDto.password,
+      role: Role.ADMIN,
+      email: registerDto.email?.trim() || undefined,
+      fullName: registerDto.fullName?.trim() || undefined,
+    });
     const tokens = await this.createSessionTokens(
       user.id,
       this.phoneForJwt(user.phone),
