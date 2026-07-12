@@ -12,6 +12,10 @@ yarn-error.log*
 apps/backend/.env
 infra/docker/.env.prod
 
+# Desktop build artifacts
+apps/desktop/release/
+apps/desktop/build/
+
 # SSH / keys
 *.pem
 

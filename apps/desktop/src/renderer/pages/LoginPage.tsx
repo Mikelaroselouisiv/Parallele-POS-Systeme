@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
@@ -5,6 +6,26 @@ import { useAuth } from '../context/AuthContext';
 import { getAuthSetupStatus, getToken } from '../services/api';
 import { BrandLogo } from '../components/BrandLogo';
 import { PasswordField } from '../components/PasswordField';
+
+function setupStatusErrorMessage(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    const code = err.code;
+    const status = err.response?.status;
+    if (status != null && status >= 500) {
+      return 'L’API répond mais renvoie une erreur serveur (souvent base Postgres arrêtée ou migrations Prisma). Vérifiez Docker/DB et les logs du backend.';
+    }
+    if (status != null && status >= 400) {
+      return `L’API a répondu avec une erreur (${status}). Vérifiez l’URL dans la config.`;
+    }
+    if (code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+      return 'Délai dépassé : le serveur ne répond pas (pare-feu EC2, mauvaise IP, ou API arrêtée). Testez l’URL dans le navigateur (voir README desktop).';
+    }
+    if (!err.response) {
+      return 'Impossible de joindre le serveur (réseau, API arrêtée, ou port fermé). En dev : lancez le backend sur le port attendu ; pour l’EC2 : ouvrez le groupe de sécurité (TCP 3000).';
+    }
+  }
+  return 'Impossible de joindre le serveur. Vérifiez que l’API tourne.';
+}
 
 export function LoginPage() {
   const { login, registerFirstAdmin, user, loading } = useAuth();
@@ -28,9 +49,9 @@ export function LoginPage() {
       try {
         const s = await getAuthSetupStatus();
         if (!cancelled) setNeedsFirstUser(s.needsFirstUser);
-      } catch {
+      } catch (err) {
         if (!cancelled) {
-          setSetupFetchError('Impossible de joindre le serveur. Vérifiez que l’API tourne.');
+          setSetupFetchError(setupStatusErrorMessage(err));
           setNeedsFirstUser(false);
         }
       } finally {

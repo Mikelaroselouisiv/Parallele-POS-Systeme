@@ -37,8 +37,9 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/pos_db?schema=public
       PORT: "3000"
+    # Exposé seulement en local : l’accès public passe par Nginx sur :80 (voir infra/nginx).
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - postgres
 

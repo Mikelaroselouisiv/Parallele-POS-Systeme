@@ -1,0 +1,33 @@
+# Production on Google Compute Engine.
+# The VM service account pulls the backend image from Artifact Registry.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: pos_postgres_prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: pos_db
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+
+  backend:
+    image: northamerica-northeast1-docker.pkg.dev/pos-freres-basiles/pos-backend/backend:latest
+    container_name: pos_backend_prod
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/pos_db?schema=public
+      PORT: "3000"
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data_prod:

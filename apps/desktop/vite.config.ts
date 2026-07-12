@@ -8,16 +8,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const monorepoRoot = path.resolve(__dirname, '../..');
 const repoIcon = path.join(monorepoRoot, 'assets', 'icons', 'icon.png');
 const publicIcon = path.join(__dirname, 'public', 'icon.png');
+const electronBuilderIcon = path.join(__dirname, 'build', 'icon.png');
 
-/** Source unique du logo : `POS-Freres-Baziles/assets/icons/icon.png` → copié vers `public/icon.png` (favicon / dist). */
+/** Source unique : `assets/icons/icon.png` → `public/` (Vite) + `build/` (electron-builder exe). */
 function syncRepoIconToPublic() {
   try {
     if (fs.existsSync(repoIcon)) {
       fs.mkdirSync(path.dirname(publicIcon), { recursive: true });
       fs.copyFileSync(repoIcon, publicIcon);
+      fs.mkdirSync(path.dirname(electronBuilderIcon), { recursive: true });
+      fs.copyFileSync(repoIcon, electronBuilderIcon);
     }
   } catch (e) {
-    console.warn('[vite] Sync logo assets/icons/icon.png → public/icon.png :', e);
+    console.warn('[vite] Sync logo assets/icons/icon.png → public + build :', e);
   }
 }
 

@@ -1,0 +1,55 @@
+# Build Docker backend and push it to Google Artifact Registry.
+# Required GitHub secrets: GCP_SA_KEY, GCP_PROJECT_ID.
+# Required GitHub variables: GCP_REGION, GCP_ARTIFACT_REPO.
+
+name: Backend - build and push to GCP
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/backend/**"
+      - "infra/docker/Dockerfile"
+      - ".github/workflows/backend-gcp.yml"
+  workflow_dispatch:
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  GCP_ARTIFACT_REPO: ${{ vars.GCP_ARTIFACT_REPO }}
+  IMAGE_NAME: backend
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker authentication
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push
+        env:
+          IMAGE_URI: ${{ secrets.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/backend
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${GCP_REGION}-docker.pkg.dev"
+          FULL_IMAGE="${REGISTRY}/${IMAGE_URI}"
+          docker build -f infra/docker/Dockerfile \
+            -t "${FULL_IMAGE}:${IMAGE_TAG}" \
+            -t "${FULL_IMAGE}:latest" \
+            apps/backend
+          docker push "${FULL_IMAGE}:${IMAGE_TAG}"
+          docker push "${FULL_IMAGE}:latest"

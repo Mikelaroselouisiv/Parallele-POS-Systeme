@@ -13,6 +13,7 @@
     "dev:electron": "wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
     "start": "electron .",
     "build": "tsc -b && vite build",
+    "icons": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/generate-icon.ps1",
     "dist:win": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --x64",
     "lint": "eslint .",
     "preview": "vite preview"
@@ -46,6 +47,7 @@
     "wait-on": "^9.0.4"
   },
   "build": {
+    "icon": "build/icon.png",
     "appId": "com.freresbasiles.pos.desktop",
     "productName": "POS Frères Basiles",
     "copyright": "Copyright © 2026",
