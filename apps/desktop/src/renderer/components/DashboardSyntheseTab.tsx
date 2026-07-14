@@ -163,10 +163,6 @@ export function DashboardSyntheseTab({ companyId, companyName, departments, onMe
         <div className="synthese-hero-inner">
           <div>
             <h2 className="synthese-hero-title">Pilotage &amp; synthèse</h2>
-            <p className="synthese-hero-lead">
-              Vue d’ensemble pour le dirigeant, le comptable ou le contrôle de gestion : indicateurs, répartition des
-              flux et performance par article sur la période de votre choix.
-            </p>
             <p className="dept-hint" style={{ marginBottom: 0 }}>
               Entreprise : <strong>{companyName ?? '—'}</strong>
             </p>
@@ -176,10 +172,6 @@ export function DashboardSyntheseTab({ companyId, companyName, departments, onMe
 
       <section className="card synthese-toolbar" style={{ marginTop: '1rem' }}>
         <div className="synthese-toolbar-row">
-          <p className="dept-hint" style={{ margin: 0, flex: '1 1 12rem' }}>
-            Période : utilisez les champs <strong>date début</strong> et <strong>date fin</strong> ci-dessous (toutes les
-            analyses et l’export PDF suivent cette plage).
-          </p>
           <div className="synthese-export-wrap">
             <button
               type="button"
@@ -262,9 +254,6 @@ export function DashboardSyntheseTab({ companyId, companyName, departments, onMe
           <section className="grid two-col synthese-charts-grid" style={{ marginTop: '1rem' }}>
             <div className="card synthese-chart-card">
               <h3 className="synthese-chart-title">Structure des flux (période sélectionnée)</h3>
-              <p className="dept-hint" style={{ marginTop: 0 }}>
-                Ventes, achats reçus, dépenses manuelles et résultat sur la même échelle.
-              </p>
               <div className="synthese-chart-area">
                 {rangeLoading || !rangeSnap ? (
                   <p className="dept-hint">Chargement…</p>
@@ -291,9 +280,6 @@ export function DashboardSyntheseTab({ companyId, companyName, departments, onMe
 
             <div className="card synthese-chart-card">
               <h3 className="synthese-chart-title">Top articles (CA)</h3>
-              <p className="dept-hint" style={{ marginTop: 0 }}>
-                Huit plus gros contributeurs au chiffre d’affaires sur la période.
-              </p>
               <div className="synthese-chart-area">
                 {rowsLoading ? (
                   <p className="dept-hint">Chargement…</p>
@@ -327,9 +313,6 @@ export function DashboardSyntheseTab({ companyId, companyName, departments, onMe
 
           <section className="card" style={{ marginTop: '1rem' }}>
             <h3 className="synthese-chart-title">Détail des ventes par article</h3>
-            <p className="dept-hint" style={{ marginTop: 0 }}>
-              Filtrez par nom, triez par colonne. Les totaux se mettent à jour selon le filtre texte.
-            </p>
             <div
               className="form-grid inline"
               style={{

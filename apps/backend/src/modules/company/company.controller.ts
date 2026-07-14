@@ -20,7 +20,7 @@ export class CompanyController {
   constructor(private readonly companyService: CompanyService) {}
 
   @Get()
-  @Roles('ADMIN', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ADMIN', 'MANAGER', 'ACCOUNTANT', 'CASHIER', 'STOCK_MANAGER')
   profile() {
     return this.companyService.getProfile();
   }

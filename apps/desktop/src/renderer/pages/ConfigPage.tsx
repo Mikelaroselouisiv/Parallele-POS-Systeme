@@ -263,9 +263,6 @@ export function ConfigPage() {
     <div className="page-inner">
       <header className="page-header">
         <h1>Configuration</h1>
-        <p className="page-lead">
-          Entreprise (et départements intégrés), matériel, conditionnements de vente, accès utilisateurs.
-        </p>
         <button
           type="button"
           className="btn btn-secondary btn-sm"
@@ -311,11 +308,6 @@ export function ConfigPage() {
       {tab === 'printer' && (
         <div className="card form-grid">
           <h2>Imprimante et ticket (par département)</h2>
-          <p className="page-lead" style={{ gridColumn: '1 / -1', marginTop: 0 }}>
-            Choisissez l’entreprise puis le département : le design du ticket (en-tête, pied, logo) et le matériel
-            s’appliquent à ce département. Le détail des lignes de vente reste celui de la caisse au moment de la
-            vente ; la zone « texte de test » sert uniquement à prévisualiser et à l’impression d’essai.
-          </p>
           <label>
             Entreprise
             <select
@@ -508,7 +500,7 @@ export function ConfigPage() {
 
               <div style={{ gridColumn: '1 / -1' }}>
                 <p className="dept-hint" style={{ marginBottom: '0.35rem' }}>
-                  Aperçu (largeur proche du ticket)
+                  Aperçu
                 </p>
                 <pre
                   className="ticket-preview-pre"
@@ -720,10 +712,6 @@ function CompaniesSection({
           ) : null}
         </div>
       </div>
-      <p className="page-lead">
-        Chaque entreprise regroupe ses départements (modifier une ligne pour les gérer). Les compteurs : produits,
-        utilisateurs, départements.
-      </p>
       {loading ? (
         <p className="info-text">Chargement…</p>
       ) : (
@@ -890,10 +878,6 @@ function CompanyFormModal({
           <h2 id="company-modal-title">
             {mode === 'create' ? 'Nouvelle entreprise' : 'Modifier l’entreprise'}
           </h2>
-          <p className="dept-hint">
-            Les départements appartiennent à cette entreprise (ex. services Marriott, unités Cursor). Ils
-            servent à classer produits et activités dans Stock.
-          </p>
         </div>
         <form className="form-grid" onSubmit={(e) => void submit(e)}>
           <label>
@@ -933,10 +917,6 @@ function CompanyFormModal({
             N° TVA / identifiant fiscal
             <input value={form.taxId} onChange={(e) => setForm({ ...form, taxId: e.target.value })} />
           </label>
-          <p className="dept-hint" style={{ gridColumn: '1 / -1', margin: 0 }}>
-            Logo et textes du ticket (en-tête, pied) se règlent dans l’onglet <strong>Imprimante</strong>, par
-            département.
-          </p>
           <label>
             Devise
             <input value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} />
@@ -964,9 +944,7 @@ function CompanyFormModal({
         {companyRecordId != null ? (
           <CompanyDepartmentsPanel companyId={companyRecordId} onDepartmentsChanged={onCompanySaved} />
         ) : (
-          <p className="dept-hint dept-embedded">
-            Enregistrez d’abord l’entreprise (bouton ci-dessus) pour ajouter les départements.
-          </p>
+          <p className="dept-hint dept-embedded">Enregistrez l’entreprise pour ajouter des départements.</p>
         )}
       </div>
     </div>
@@ -1057,10 +1035,6 @@ function PackagingSection() {
   return (
     <div className="card">
       <h2>Conditionnements de vente</h2>
-      <p className="page-lead">
-        Chaque conditionnement est rattaché à un <strong>département</strong> (ex. unité, caisse, gallon pour
-        l’épicerie ; autre liste pour l’hôtel). Les codes sont en MAJUSCULES (UNITE, CAISSE…).
-      </p>
       <p className="dept-hint" style={{ marginTop: 0 }}>
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => void refreshMeta()}>
           Actualiser entreprises / départements
@@ -1103,7 +1077,6 @@ function PackagingSection() {
 
       <section className="dept-form-card" style={{ marginTop: '0.75rem' }}>
         <h3 id="packaging-new">Nouveau conditionnement</h3>
-        <p className="dept-hint">S’applique au département sélectionné ci-dessus.</p>
         <form className="form-grid inline" onSubmit={(e) => void add(e)}>
           <input placeholder="CODE" value={code} onChange={(e) => setCode(e.target.value)} required />
           <input placeholder="Libellé" value={label} onChange={(e) => setLabel(e.target.value)} required />
@@ -1227,9 +1200,6 @@ function PackagingEditModal({
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
       <div className="modal card" role="dialog" onClick={(e) => e.stopPropagation()}>
         <h2>Modifier le conditionnement</h2>
-        <p className="dept-hint">
-          Le changement de département est refusé si des produits utilisent déjà ce conditionnement.
-        </p>
         <form className="form-grid" onSubmit={(e) => void submit(e)}>
           <label>
             Entreprise
@@ -1321,7 +1291,6 @@ function DepartmentEditModal({
       <div className="modal card" role="dialog" onClick={(e) => e.stopPropagation()}>
         <div className="modal-heading">
           <h2>Modifier le département</h2>
-          <p className="dept-hint">Nom et description affichés dans la liste.</p>
         </div>
         <form className="form-grid" onSubmit={(e) => void submit(e)}>
           <label>
@@ -1444,10 +1413,6 @@ function CompanyDepartmentsPanel({
   return (
     <div className="dept-embedded dept-section">
       <h3 className="dept-list-title">Départements de cette entreprise</h3>
-      <p className="dept-intro">
-        Une même entreprise peut regrouper plusieurs départements (ex. hôtel, spa, boutique). Chaque produit ou
-        service est rattaché à l’entreprise et au département concerné dans Stock.
-      </p>
 
       <section className="dept-form-card" aria-labelledby="dept-new-embedded">
         <h3 id="dept-new-embedded">Ajouter un département</h3>
@@ -1494,7 +1459,7 @@ function CompanyDepartmentsPanel({
         {deptErr ? <p className="error-text">{deptErr}</p> : null}
         {!canEdit ? (
           <p className="dept-hint" style={{ marginTop: '0.5rem' }}>
-            Seuls les administrateurs et gestionnaires peuvent ajouter ou modifier des départements.
+            Réservé aux administrateurs et gestionnaires.
           </p>
         ) : null}
       </section>
@@ -1557,10 +1522,7 @@ function CompanyDepartmentsPanel({
                   {loadingProducts ? (
                     <p className="dept-hint">Chargement…</p>
                   ) : deptProducts.length === 0 ? (
-                    <p className="dept-hint">
-                      Aucun produit. Dans <strong>Stock</strong>, choisissez cette entreprise et ce département
-                      pour le produit.
-                    </p>
+                    <p className="dept-hint">Aucun produit rattaché.</p>
                   ) : (
                     <div className="table-wrap">
                       <table className="data-table">
@@ -1668,10 +1630,6 @@ function UsersSection({
   return (
     <div className="card">
       <h2>Utilisateurs</h2>
-      <p className="page-lead" style={{ marginTop: 0 }}>
-        Connexion par <strong>téléphone</strong> et mot de passe. Les rôles autres qu’<strong>ADMIN</strong> doivent
-        être rattachés à un <strong>département</strong> ; les administrateurs ont un accès global sans rattachement.
-      </p>
       {msg ? <p className="error-text">{msg}</p> : null}
 
       <section aria-labelledby="users-list-heading">
@@ -1750,7 +1708,7 @@ function UsersSection({
         <h3 id="users-new-heading">Nouvel utilisateur</h3>
         <form className="form-grid" onSubmit={(e) => void add(e)}>
           <label>
-            Numéro de téléphone (identifiant de connexion)
+            Téléphone
             <input
               type="tel"
               inputMode="tel"
@@ -1957,9 +1915,6 @@ function UserEditModal({
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
       <div className="modal card" role="dialog" onClick={(e) => e.stopPropagation()}>
         <h2>Modifier l’utilisateur</h2>
-        <p className="dept-hint">
-          Laissez le mot de passe vide pour le conserver. Le téléphone sert d’identifiant de connexion.
-        </p>
         {err ? <p className="error-text">{err}</p> : null}
         <form className="form-grid" onSubmit={(e) => void submit(e)}>
           <label>

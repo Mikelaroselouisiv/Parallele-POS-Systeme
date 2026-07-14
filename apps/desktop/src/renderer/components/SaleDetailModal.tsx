@@ -178,13 +178,6 @@ export function SaleDetailModal({
           </>
         ) : null}
 
-        <p className="dept-hint" style={{ marginTop: '0.75rem' }}>
-          {hasElectronPrint
-            ? 'Impression : même ticket que sur la caisse (thermique ou secours). '
-            : 'Impression : aperçu navigateur. '}
-          PDF : généré par le serveur (comme l’export inventaires), fichier téléchargé — pas d’impression.
-        </p>
-
         {receiptMsg ? (
           <p className="info-text" style={{ marginTop: '0.5rem', marginBottom: 0 }}>
             {receiptMsg}

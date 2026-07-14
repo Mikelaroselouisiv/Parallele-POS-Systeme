@@ -34,7 +34,7 @@ export class CompaniesController {
   }
 
   @Get(':id')
-  @Roles('ADMIN', 'MANAGER', 'ACCOUNTANT')
+  @Roles('ADMIN', 'MANAGER', 'ACCOUNTANT', 'CASHIER', 'STOCK_MANAGER')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.companyService.findOne(id);
   }

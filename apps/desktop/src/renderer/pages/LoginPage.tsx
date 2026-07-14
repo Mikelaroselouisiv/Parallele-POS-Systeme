@@ -116,10 +116,7 @@ export function LoginPage() {
             <BrandLogo size={72} />
           </div>
           <h1 className="login-title">Configuration initiale</h1>
-          <p className="login-sub">
-            Aucun compte n’existe encore. Créez le compte <strong>administrateur principal</strong> (téléphone
-            et mot de passe). Vous pourrez ensuite ajouter les autres utilisateurs depuis l’application.
-          </p>
+          <p className="login-sub">Créez le compte administrateur.</p>
           <form className="form-grid" onSubmit={(e) => void onBootstrap(e)}>
             <label>
               Numéro de téléphone
@@ -182,7 +179,6 @@ export function LoginPage() {
           <BrandLogo size={72} />
         </div>
         <h1 className="login-title">Connexion</h1>
-        <p className="login-sub">Point de vente — accès sécurisé par rôle</p>
         {setupFetchError ? <p className="error-text">{setupFetchError}</p> : null}
         <form className="form-grid" onSubmit={(e) => void onLogin(e)}>
           <label>

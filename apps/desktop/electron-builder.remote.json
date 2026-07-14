@@ -1,7 +1,7 @@
 {
   "appId": "com.freresbasiles.pos.desktop.remote",
   "productName": "POS Freres Basiles Remote",
-  "artifactName": "POS-Freres-Basiles-Remote-1.0.0.${ext}",
+  "artifactName": "POS-Freres-Basiles-Remote-1.0.2.${ext}",
   "copyright": "Copyright © 2026",
   "icon": "build/icon.ico",
   "directories": {
@@ -21,7 +21,7 @@
   "afterPack": "scripts/after-pack.cjs",
   "extraMetadata": {
     "edition": "remote",
-    "version": "1.0.0"
+    "version": "1.0.2"
   },
   "extraResources": [
     {

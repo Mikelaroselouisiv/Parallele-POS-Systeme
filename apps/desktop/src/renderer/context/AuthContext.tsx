@@ -75,15 +75,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (phone: string, password: string) => {
     const res = await apiLogin(phone, password);
-    setUser(res.user);
-    writeSessionUser(res.user);
+    try {
+      const u = await getMe();
+      setUser(u);
+      writeSessionUser(u);
+    } catch {
+      setUser(res.user);
+      writeSessionUser(res.user);
+    }
   }, []);
 
   const registerFirstAdmin = useCallback(
     async (payload: { phone: string; password: string; email?: string; fullName?: string }) => {
       const res = await apiRegisterFirstAdmin(payload);
-      setUser(res.user);
-      writeSessionUser(res.user);
+      try {
+        const u = await getMe();
+        setUser(u);
+        writeSessionUser(u);
+      } catch {
+        setUser(res.user);
+        writeSessionUser(res.user);
+      }
     },
     [],
   );

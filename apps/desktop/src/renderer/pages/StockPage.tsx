@@ -315,7 +315,6 @@ export function StockPage() {
     <div className="page-inner">
       <header className="page-header">
         <h1>Stock & produits</h1>
-
       </header>
 
       <div className="config-tabs" role="tablist" aria-label="Sections stock">
@@ -420,7 +419,7 @@ export function StockPage() {
                   <input value={name} onChange={(e) => setName(e.target.value)} required />
                 </label>
                 <label>
-                  Conditionnement (unité de stock = unité à la caisse)
+                  Conditionnement
                   <select
                     value={packId === '' ? '' : String(packId)}
                     onChange={(e) => setPackId(e.target.value ? Number(e.target.value) : '')}
@@ -433,7 +432,7 @@ export function StockPage() {
                   </select>
                 </label>
                 <label>
-                  Prix unitaire de base (sous le 1er palier)
+                  Prix unitaire
                   <input
                     type="number"
                     min={0}
@@ -444,10 +443,6 @@ export function StockPage() {
                   />
                 </label>
                 <div className="volume-tiers-block catalog-volume-tiers">
-                  <p className="dept-hint" style={{ margin: '0 0 0.5rem' }}>
-                    Paliers (optionnel) : à partir de la quantité indiquée sur une ligne de vente, le prix unitaire
-                    devient le prix « rabais ».
-                  </p>
                   {volumeTiers.map((row, idx) => (
                     <div key={idx} className="volume-tier-row">
                       <label>
@@ -511,9 +506,6 @@ export function StockPage() {
             Catalogue ({catalogFilteredSorted.length}
             {catalogFilteredSorted.length !== products.length ? ` / ${products.length}` : ''})
           </h2>
-          <p className="page-lead" style={{ marginTop: 0 }}>
-           
-          </p>
           <div className="form-grid" style={{ marginBottom: '1rem', maxWidth: '36rem' }}>
             <label>
               Filtrer par entreprise
@@ -640,7 +632,6 @@ export function StockPage() {
       {tab === 'operations' && isAdmin ? (
         <section className="card">
           <h2>Réapprovisionnement & retraits manuels</h2>
-          
           {opMsg ? (
             <p className={/enregistrée/i.test(opMsg) ? 'info-text' : 'error-text'}>{opMsg}</p>
           ) : null}
@@ -963,10 +954,6 @@ function EditProductModal({
               ))}
             </select>
           </label>
-          <p className="dept-hint" style={{ gridColumn: '1 / -1', margin: 0 }}>
-            <strong>Conditionnement</strong> : défini par département dans Configuration → Conditionnement. C’est l’unité
-            de <strong>stock</strong> et de vente à la caisse.
-          </p>
           <label>
             Conditionnement (unité de stock) *
             <select
@@ -1002,7 +989,7 @@ function EditProductModal({
             <input type="number" min={0} step={0.01} value={cost} onChange={(e) => setCost(e.target.value)} />
           </label>
           <label>
-            Prix unitaire de base (sous le 1er palier)
+            Prix unitaire
             <input
               type="number"
               min={0}
@@ -1013,9 +1000,6 @@ function EditProductModal({
             />
           </label>
           <div className="volume-tiers-block">
-            <p className="dept-hint" style={{ margin: '0 0 0.5rem' }}>
-              Paliers : à partir de la quantité sur une ligne de vente, prix unitaire = prix rabais.
-            </p>
             {priceTiers.map((row, idx) => (
               <div key={idx} className="volume-tier-row">
                 <label>
@@ -1064,7 +1048,7 @@ function EditProductModal({
             </button>
           </div>
           <label>
-            Stock (quantités dans l’unité de conditionnement ci-dessus)
+            Stock
             <input type="number" min={0} step={0.001} value={stock} onChange={(e) => setStock(e.target.value)} />
           </label>
           <label>
@@ -1087,10 +1071,6 @@ function EditProductModal({
           </label>
           {isService ? (
             <div className="volume-tiers-block" style={{ gridColumn: '1 / -1' }}>
-              <p className="dept-hint" style={{ margin: '0 0 0.5rem' }}>
-                <strong>Recette (matières premières)</strong> : quantités consommées par <strong>1 unité de base</strong>{' '}
-                du service (même unité que le stock article physique). À la vente, le POS déduit ces stocks.
-              </p>
               {recipeLines.map((row, idx) => (
                 <div key={idx} className="volume-tier-row">
                   <label>

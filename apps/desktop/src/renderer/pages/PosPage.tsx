@@ -104,17 +104,32 @@ export function PosPage() {
     const userCompanyId = typeof user.companyId === 'number' ? user.companyId : undefined;
 
     if (isCashier) {
-      void Promise.all([
-        loadProductsWithCache(deptId),
-        getCompany(),
-        getPrinterSettings(deptId),
-      ])
-        .then(([prods, co, pr]) => {
+      void (async () => {
+        try {
+          const [prods, pr] = await Promise.all([
+            loadProductsWithCache(deptId),
+            getPrinterSettings(deptId).catch(() => null),
+          ]);
           setProducts(prods);
-          setCompany(co);
           setPrinter(pr);
-        })
-        .catch(() => setStatus('Erreur chargement caisse', { persist: true }));
+
+          if (userCompanyId != null) {
+            try {
+              setCompany(await getCompanyById(userCompanyId));
+            } catch {
+              setCompany(null);
+            }
+          } else {
+            try {
+              setCompany(await getCompany());
+            } catch {
+              setCompany(null);
+            }
+          }
+        } catch {
+          setStatus('Erreur chargement caisse', { persist: true });
+        }
+      })();
       return;
     }
 

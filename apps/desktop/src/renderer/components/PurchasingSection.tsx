@@ -254,7 +254,6 @@ export function PurchasingSection({ visible, companyId, departments, products, o
       <div className="grid two-col purchasing-layout">
         <section className="card purchasing-section">
           <h2 className="purchasing-section-title">Achats reçus (réceptions)</h2>
-          
           {grMsg ? <p className={/postée|enregistrée/i.test(grMsg) ? 'info-text' : 'error-text'}>{grMsg}</p> : null}
 
           <div className="purchasing-form-head" style={{ gridTemplateColumns: '1fr 1fr', marginBottom: '0.75rem' }}>
@@ -344,7 +343,7 @@ export function PurchasingSection({ visible, companyId, departments, products, o
                     </label>
                   </div>
                   <div className="purchasing-lines-block">
-                    <p className="dept-hint purchasing-lines-caption">Lignes — prix d’achat par unité de conditionnement</p>
+                    <p className="dept-hint purchasing-lines-caption">Lignes</p>
                     {grLines.map((row, idx) => (
                       <div key={idx} className="purchasing-line-grid">
                         <label>
@@ -473,7 +472,6 @@ export function PurchasingSection({ visible, companyId, departments, products, o
 
         <section className="card purchasing-section">
           <h2 className="purchasing-section-title">Commandes fournisseur (bons)</h2>
-      
           {poMsg ? <p className={/créé/i.test(poMsg) ? 'info-text' : 'error-text'}>{poMsg}</p> : null}
 
           <div className="purchasing-form-head" style={{ gridTemplateColumns: '1fr 1fr', marginBottom: '0.75rem' }}>

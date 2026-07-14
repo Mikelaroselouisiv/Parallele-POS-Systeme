@@ -87,7 +87,7 @@ export function DashboardPage() {
   type TabId = 'synthese' | 'ventes' | 'achats' | 'stock';
   type PeriodId = 'day' | 'week' | 'month';
 
-  const { can, user: sessionUser } = useAuth();
+  const { can } = useAuth();
   const isAdmin = can(['ADMIN']);
 
   const [tab, setTab] = useState<TabId>('ventes');
@@ -681,7 +681,6 @@ export function DashboardPage() {
     <div className="page-inner">
       <header className="page-header">
         <h1>Tableau de bord (ADMIN)</h1>
-       
       </header>
 
       <div className="config-tabs" style={{ marginBottom: '0.9rem' }}>
@@ -783,10 +782,6 @@ export function DashboardPage() {
             <>
               <section className="card" style={{ marginTop: '1rem' }}>
                 <h2>Ventes</h2>
-                <p className="page-lead" style={{ marginTop: 0 }}>
-                  Entreprise : <strong>{selectedCompanyName ?? '—'}</strong>. Totaux par département puis par article.
-                  Ajustez la plage de dates pour recalculer le rapport et l’export PDF.
-                </p>
                 <div
                   className="form-grid inline"
                   style={{
@@ -891,10 +886,6 @@ export function DashboardPage() {
 
               <section className="card" style={{ marginTop: '1rem' }}>
                 <h2>Résumé financier</h2>
-                <p className="page-lead" style={{ marginTop: 0 }}>
-                  Même entreprise et département qu’en tête de page. Les achats et ventes sont filtrés par département ; les
-                  dépenses manuelles restent au périmètre entreprise.
-                </p>
                 <div
                   className="form-grid inline"
                   style={{
@@ -1034,10 +1025,6 @@ export function DashboardPage() {
 
               <section className="card" style={{ marginTop: '1rem' }}>
                 <h2>Transactions de vente</h2>
-                <p className="page-lead" style={{ marginTop: 0 }}>
-                  Une ligne par ticket. Dates inclusives (jour entier) ; laissez une borne vide pour ne pas filtrer de ce
-                  côté. Cliquez une ligne pour le détail et le PDF ticket.
-                </p>
                 <div
                   className="form-grid inline"
                   style={{
@@ -1162,11 +1149,6 @@ export function DashboardPage() {
               <section className="grid two-col" style={{ marginTop: '1rem' }}>
                 <div className="card">
                   <h2>Nouvelle dépense manuelle</h2>
-                  <p className="dept-hint" style={{ marginTop: 0 }}>
-                    Entreprise : <strong>{selectedCompanyName ?? '—'}</strong>. La dépense est enregistrée avec votre
-                    identifiant ({sessionUser?.fullName?.trim() || sessionUser?.phone || '—'}). La date comptable est
-                    celle choisie ci-dessous (stockée en base sur la ligne financière).
-                  </p>
                   <form className="form-grid" onSubmit={(e) => void submitExpense(e)}>
                     <label>
                       Libellé
@@ -1200,10 +1182,6 @@ export function DashboardPage() {
 
                 <div className="card">
                   <h2>Totaux (achats & dépenses manuelles)</h2>
-                  <p className="dept-hint" style={{ marginTop: 0 }}>
-                    Filtrez par plage de dates (inclusif). Les ventes du tableau ne sont pas affichées ici ; elles sont
-                    dans l’onglet Ventes.
-                  </p>
                   <div
                     className="form-grid inline"
                     style={{
@@ -1253,10 +1231,6 @@ export function DashboardPage() {
 
               <section className="card" style={{ marginTop: '1rem' }}>
                 <h2>Journal (achats, ventes caisse, dépenses)</h2>
-                <p className="page-lead" style={{ marginTop: 0 }}>
-                  Filtrez par nature et par plage de dates. Les achats sont les réceptions postées ; les ventes sont les
-                  encaissements liés aux tickets ; les dépenses incluent les sorties manuelles.
-                </p>
                 <div
                   className="form-grid inline"
                   style={{
@@ -1413,9 +1387,6 @@ export function DashboardPage() {
 
               <section className="card">
                 <h2>Mouvements récents (stock)</h2>
-                <p className="page-lead" style={{ marginTop: 0 }}>
-                  Filtrés par entreprise. Tri et pagination côté serveur ; la recherche filtre les lignes déjà chargées.
-                </p>
 
                 <div className="form-grid inline" style={{ marginBottom: '0.75rem' }}>
                   <label style={{ gridColumn: '1 / span 2' }}>

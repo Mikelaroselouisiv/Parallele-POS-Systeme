@@ -92,6 +92,9 @@ export class AuthService {
         email: user.email,
         role: user.role,
         fullName: user.fullName,
+        isActive: user.isActive,
+        companyId: user.companyId,
+        departmentId: user.departmentId,
         createdAt: user.createdAt,
       },
     };
