@@ -49,7 +49,7 @@ export class SyncService {
 
     const records: Array<{
       uuid: string;
-      updatedAt?: string;
+      updatedAt: string;
       deletedAt: string | null;
       data: Record<string, unknown>;
     }> = [];
@@ -266,7 +266,9 @@ export class SyncService {
           ? String(row.updatedAt)
           : row.createdAt instanceof Date
             ? row.createdAt.toISOString()
-            : undefined;
+            : row.createdAt
+              ? String(row.createdAt)
+              : new Date(0).toISOString();
     const deletedAt =
       row.deletedAt instanceof Date
         ? row.deletedAt.toISOString()
