@@ -8,10 +8,12 @@ import {
   SYNC_ENTITIES,
   type SyncEntityName,
 } from './sync.entities';
+import { ENTITY_FK_MAP, RELATION_OBJECT_KEYS } from './sync-fk';
 
 type Delegate = {
   findMany: (args: unknown) => Promise<Record<string, unknown>[]>;
   findUnique: (args: unknown) => Promise<Record<string, unknown> | null>;
+  findFirst?: (args: unknown) => Promise<Record<string, unknown> | null>;
   create: (args: unknown) => Promise<Record<string, unknown>>;
   update: (args: unknown) => Promise<Record<string, unknown>>;
 };
@@ -45,7 +47,15 @@ export class SyncService {
       take: limit,
     });
 
-    const records = rows.map((row) => this.toSyncRecord(row));
+    const records: Array<{
+      uuid: string;
+      updatedAt?: string;
+      deletedAt: string | null;
+      data: Record<string, unknown>;
+    }> = [];
+    for (const row of rows) {
+      records.push(await this.toSyncRecord(entity, row));
+    }
     const last = rows[rows.length - 1];
     const nextCursor =
       last && last[timeField]
@@ -60,8 +70,11 @@ export class SyncService {
       throw new BadRequestException(`Entité sync inconnue: ${dto.entity}`);
     }
     const entity = dto.entity;
-    const results: Array<{ uuid: string; action: 'created' | 'updated' | 'skipped' | 'error'; error?: string }> =
-      [];
+    const results: Array<{
+      uuid: string;
+      action: 'created' | 'updated' | 'skipped' | 'error';
+      error?: string;
+    }> = [];
 
     for (const record of dto.records) {
       try {
@@ -138,12 +151,12 @@ export class SyncService {
   }
 
   private async createFromSync(entity: SyncEntityName, record: SyncRecordDto) {
-    const data = this.sanitizePayload(entity, record);
+    const data = await this.sanitizePayload(entity, record);
     await this.delegate(entity).create({ data });
   }
 
   private async updateFromSync(entity: SyncEntityName, record: SyncRecordDto) {
-    const data = this.sanitizePayload(entity, record);
+    const data = await this.sanitizePayload(entity, record);
     delete data.uuid;
     await this.delegate(entity).update({
       where: { uuid: record.uuid },
@@ -152,33 +165,86 @@ export class SyncService {
   }
 
   /**
-   * Payload sync : champs scalaires + uuid/timestamps.
-   * Les FK Int locales ne sont pas fiables cross-nœud — l’agent doit
-   * résoudre via uuid* (ex. productUuid) avant push. Ici on accepte
-   * un payload déjà résolu (ids locaux du nœud cible) ou scalaires purs.
+   * Payload sync : scalaires + uuid/timestamps + FK résolues via *Uuid → id local.
    */
-  private sanitizePayload(
+  private async sanitizePayload(
     entity: SyncEntityName,
     record: SyncRecordDto,
-  ): Record<string, unknown> {
-    const raw = { ...record.data };
+  ): Promise<Record<string, unknown>> {
+    const raw: Record<string, unknown> = { ...record.data };
     raw.uuid = record.uuid;
     if (record.updatedAt) raw.updatedAt = new Date(record.updatedAt);
     if (record.deletedAt === null) raw.deletedAt = null;
     else if (record.deletedAt) raw.deletedAt = new Date(record.deletedAt);
 
-    // Ne jamais laisser Prisma écraser la PK autoincrement
     delete raw.id;
-
-    // Mot de passe User : conserver tel quel (déjà hashé)
-    if (entity === 'Sale' && typeof raw.clientUuid === 'string') {
-      // ok
+    for (const key of RELATION_OBJECT_KEYS) {
+      delete raw[key];
     }
 
+    await this.resolveForeignKeys(entity, raw);
     return raw;
   }
 
-  private toSyncRecord(row: Record<string, unknown>) {
+  /** Remplace les Int source par les ids locaux via les uuid parents. */
+  private async resolveForeignKeys(
+    entity: SyncEntityName,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    const refs = ENTITY_FK_MAP[entity] ?? [];
+    for (const ref of refs) {
+      const legacyId = data[ref.idField];
+      // Jamais laisser l’Int source tel quel sans contrôle.
+      delete data[ref.idField];
+
+      const uuidVal = data[ref.uuidField];
+      delete data[ref.uuidField];
+
+      if (uuidVal != null && uuidVal !== '') {
+        const parent = await this.delegate(ref.parent).findUnique({
+          where: { uuid: String(uuidVal) },
+        });
+        if (!parent?.id) {
+          if (ref.required) {
+            throw new BadRequestException(
+              `Parent ${ref.parent} introuvable (uuid=${uuidVal}) pour ${entity}`,
+            );
+          }
+          data[ref.idField] = null;
+          continue;
+        }
+        data[ref.idField] = Number(parent.id);
+        continue;
+      }
+
+      // Compat payloads anciens (avant enrich *Uuid) : tenter l’id local si la ligne existe.
+      if (legacyId != null && legacyId !== '') {
+        const parentById = await this.delegate(ref.parent).findUnique({
+          where: { id: Number(legacyId) },
+        });
+        if (parentById?.id) {
+          data[ref.idField] = Number(parentById.id);
+          continue;
+        }
+      }
+
+      if (ref.required) {
+        throw new BadRequestException(
+          `FK requise manquante: ${ref.uuidField} pour ${entity}`,
+        );
+      }
+      data[ref.idField] = null;
+    }
+
+    // Nettoyer tout *Uuid résiduel non mappé
+    for (const key of Object.keys(data)) {
+      if (key.endsWith('Uuid') && key !== 'uuid' && key !== 'clientUuid') {
+        delete data[key];
+      }
+    }
+  }
+
+  private async toSyncRecord(entity: SyncEntityName, row: Record<string, unknown>) {
     const { id: _id, ...rest } = row;
     const uuid = String(row.uuid ?? '');
     const updatedAt =
@@ -196,12 +262,43 @@ export class SyncService {
           ? String(row.deletedAt)
           : null;
 
+    const data = this.serializeRow(rest);
+    for (const key of RELATION_OBJECT_KEYS) {
+      delete data[key];
+    }
+    await this.enrichParentUuids(entity, row, data);
+
     return {
       uuid,
       updatedAt,
       deletedAt,
-      data: this.serializeRow(rest),
+      data,
     };
+  }
+
+  /** Ajoute companyUuid / departmentUuid / … et retire les Int FK du payload filaire. */
+  private async enrichParentUuids(
+    entity: SyncEntityName,
+    row: Record<string, unknown>,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    const refs = ENTITY_FK_MAP[entity] ?? [];
+    for (const ref of refs) {
+      const idVal = row[ref.idField];
+      delete data[ref.idField];
+      if (idVal == null || idVal === '') {
+        data[ref.uuidField] = null;
+        continue;
+      }
+      try {
+        const parent = await this.delegate(ref.parent).findUnique({
+          where: { id: Number(idVal) },
+        });
+        data[ref.uuidField] = parent?.uuid ? String(parent.uuid) : null;
+      } catch {
+        data[ref.uuidField] = null;
+      }
+    }
   }
 
   private serializeRow(row: Record<string, unknown>): Record<string, unknown> {
@@ -210,6 +307,7 @@ export class SyncService {
       if (v instanceof Date) out[k] = v.toISOString();
       else if (v instanceof Prisma.Decimal) out[k] = v.toString();
       else if (typeof v === 'bigint') out[k] = Number(v);
+      else if (v !== null && typeof v === 'object') continue;
       else out[k] = v;
     }
     return out;

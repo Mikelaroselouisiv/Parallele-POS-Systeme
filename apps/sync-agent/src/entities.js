@@ -1,8 +1,7 @@
 /**
- * Entités syncées dans l’ordre (dépendances FK locales approximatives).
- * Les payloads portent déjà les FK Int du nœud source — le push vers l’autre
- * nœud ne fonctionne pleinement qu’après bootstrap / même dataset.
- * V1 : transporte uuid + data ; résolution FK uuid→id = évolution ultérieure.
+ * Entités syncées dans l’ordre (parents avant enfants).
+ * Les payloads transportent des *Uuid parents ; le backend cible
+ * résout uuid → id local (voir SyncService.resolveForeignKeys).
  */
 export const ENTITY_ORDER = [
   'Company',

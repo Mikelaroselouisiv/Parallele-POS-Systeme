@@ -8,15 +8,16 @@
 
 Les deux nœuds peuvent écrire hors-ligne ; la réconciliation se fait au retour réseau via `uuid` + `updatedAt` (+ soft delete `deletedAt`).
 
-## Identité
+## Identité et FK
 
 | Champ | Rôle |
 |-------|------|
-| `id` (Int) | PK locale / API REST existante — **non synchronisée** comme clé |
+| `id` (Int) | PK locale / API REST — **jamais** identité sync |
 | `uuid` | Identité stable cross-nœuds |
-| `updatedAt` | Curseur LWW (last-write-wins) pour entités mutables |
-| `deletedAt` | Soft delete synchronisable |
-| `Sale.clientUuid` | Idempotence des ventes créées offline |
+| `updatedAt` / `deletedAt` | LWW (`max`) |
+| `companyUuid`, `departmentUuid`, … | Parents transportés sur le fil ; le nœud cible résout → `companyId` local |
+
+Si un parent requis est introuvable, le push marque `error` et le **curseur n’avance pas** (retry).
 
 ## Règles par famille
 
