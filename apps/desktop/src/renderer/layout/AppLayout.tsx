@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { BrandLogo } from '../components/BrandLogo';
 import { useAuth } from '../context/AuthContext';
@@ -16,6 +16,7 @@ export function AppLayout() {
   const { user, logout, can } = useAuth();
   const navigate = useNavigate();
   const [pendingSales, setPendingSales] = useState(0);
+  const syncRunning = useRef(false);
 
   const refreshPending = useCallback(() => {
     void pendingSalesCount().then(setPendingSales);
@@ -31,20 +32,35 @@ export function AppLayout() {
     return () => window.removeEventListener('pos-pending-sales-changed', onPendingChanged);
   }, [refreshPending]);
 
+  const syncPendingSales = useCallback(async () => {
+    if (syncRunning.current) return;
+    syncRunning.current = true;
+    try {
+      const result = await syncSalesQueue();
+      refreshPending();
+      if (result.synced > 0) {
+        window.dispatchEvent(new CustomEvent('pos-offline-synced', { detail: result }));
+      }
+    } catch {
+      // La file reste sur disque et sera retentée au prochain passage.
+    } finally {
+      syncRunning.current = false;
+    }
+  }, [refreshPending]);
+
   useEffect(() => {
     const onOnline = () => {
-      void syncSalesQueue()
-        .then((r) => {
-          refreshPending();
-          if (r.synced > 0) {
-            window.dispatchEvent(new CustomEvent('pos-offline-synced', { detail: r }));
-          }
-        })
-        .catch(() => undefined);
+      void syncPendingSales();
     };
+
     window.addEventListener('online', onOnline);
-    return () => window.removeEventListener('online', onOnline);
-  }, [refreshPending]);
+    void syncPendingSales();
+    const timer = window.setInterval(() => void syncPendingSales(), 30_000);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.clearInterval(timer);
+    };
+  }, [syncPendingSales]);
 
   const visible = nav.filter((item) => can(item.roles));
 

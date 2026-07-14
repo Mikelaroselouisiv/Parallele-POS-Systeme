@@ -58,6 +58,48 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+let refreshPromise: Promise<string | null> | null = null;
+
+/**
+ * Une vente restée dans l'outbox peut être rejouée après expiration du jeton
+ * d'accès. Rafraîchir la session puis rejouer la requête une seule fois.
+ */
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const config = error?.config as
+      | (Record<string, unknown> & {
+          _posRetried?: boolean;
+          url?: string;
+          headers?: Record<string, string>;
+        })
+      | undefined;
+    const url = String(config?.url ?? '');
+    const canRefresh =
+      error?.response?.status === 401 &&
+      config &&
+      !config._posRetried &&
+      !url.includes('/auth/login') &&
+      !url.includes('/auth/register') &&
+      !url.includes('/auth/refresh') &&
+      Boolean(readRefreshToken());
+
+    if (!canRefresh) return Promise.reject(error);
+
+    config._posRetried = true;
+    refreshPromise ??= refreshSession()
+      .catch(() => null)
+      .finally(() => {
+        refreshPromise = null;
+      });
+    const token = await refreshPromise;
+    if (!token) return Promise.reject(error);
+
+    config.headers = { ...(config.headers ?? {}), Authorization: `Bearer ${token}` };
+    return api.request(config);
+  },
+);
+
 export async function login(phone: string, password: string): Promise<LoginResponse> {
   const { data } = await api.post<LoginResponse>('/auth/login', { phone, password });
   writeToken(data.accessToken);

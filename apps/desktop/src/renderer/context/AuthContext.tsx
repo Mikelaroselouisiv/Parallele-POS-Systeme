@@ -16,6 +16,7 @@ import {
   registerFirstAdmin as apiRegisterFirstAdmin,
   writeSessionUser,
 } from '../services/api';
+import { isLikelyNetworkError } from '../services/api-errors';
 import type { SessionUser, UserRole } from '../types/api';
 
 type AuthContextValue = {
@@ -59,10 +60,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const u = await getMe();
         if (!cancelled) setUser(u);
-      } catch {
+      } catch (error) {
         if (!cancelled) {
-          apiLogout();
-          setUser(null);
+          const cachedUser = getSessionUser();
+          if (isLikelyNetworkError(error) && cachedUser) {
+            // Session déjà validée en ligne : garder l'utilisateur pendant la panne.
+            setUser(cachedUser);
+          } else {
+            apiLogout();
+            setUser(null);
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);
