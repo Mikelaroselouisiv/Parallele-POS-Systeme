@@ -173,9 +173,21 @@ export class SyncService {
   ): Promise<Record<string, unknown>> {
     const raw: Record<string, unknown> = { ...record.data };
     raw.uuid = record.uuid;
-    if (record.updatedAt) raw.updatedAt = new Date(record.updatedAt);
-    if (record.deletedAt === null) raw.deletedAt = null;
-    else if (record.deletedAt) raw.deletedAt = new Date(record.deletedAt);
+
+    // AuditLog n’a que createdAt (pas updatedAt / deletedAt).
+    if (entity === 'AuditLog') {
+      delete raw.updatedAt;
+      delete raw.deletedAt;
+      if (record.updatedAt && !raw.createdAt) {
+        raw.createdAt = new Date(record.updatedAt);
+      } else if (typeof raw.createdAt === 'string') {
+        raw.createdAt = new Date(raw.createdAt);
+      }
+    } else {
+      if (record.updatedAt) raw.updatedAt = new Date(record.updatedAt);
+      if (record.deletedAt === null) raw.deletedAt = null;
+      else if (record.deletedAt) raw.deletedAt = new Date(record.deletedAt);
+    }
 
     delete raw.id;
     for (const key of RELATION_OBJECT_KEYS) {

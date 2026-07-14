@@ -22,16 +22,17 @@ if [[ ! -f "${COMPOSE_LOCAL}" ]]; then
   exit 1
 fi
 
+# IAP : le SA GitHub Actions n’a souvent pas d’IP publique SSH ouverte.
+SSH_OPTS=(--zone="${GCP_VM_ZONE}" --project="${GCP_PROJECT_ID}" --tunnel-through-iap)
+
 echo "==> Copie ${COMPOSE_LOCAL} → ${GCP_VM_NAME}:${COMPOSE_REMOTE}"
 gcloud compute scp "${COMPOSE_LOCAL}" \
   "${GCP_VM_NAME}:/tmp/docker-compose.gcp.yml" \
-  --zone="${GCP_VM_ZONE}" \
-  --project="${GCP_PROJECT_ID}"
+  "${SSH_OPTS[@]}"
 
 echo "==> Déploiement sur ${GCP_VM_NAME} (${GCP_VM_ZONE})"
 gcloud compute ssh "${GCP_VM_NAME}" \
-  --zone="${GCP_VM_ZONE}" \
-  --project="${GCP_PROJECT_ID}" \
+  "${SSH_OPTS[@]}" \
   --command="set -euo pipefail
     REMOTE_DIR='${REMOTE_DIR}'
     sudo cp /tmp/docker-compose.gcp.yml \"\${REMOTE_DIR}/docker-compose.gcp.yml\"
