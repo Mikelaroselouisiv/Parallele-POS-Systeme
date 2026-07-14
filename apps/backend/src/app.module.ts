@@ -16,6 +16,7 @@ import { ProductsModule } from './modules/products/products.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { StoresModule } from './modules/stores/stores.module';
+import { SyncModule } from './modules/sync/sync.module';
 import { UsersModule } from './modules/users/users.module';
 import { PrismaModule } from './prisma/prisma.module';
 
@@ -41,6 +42,7 @@ import { PrismaModule } from './prisma/prisma.module';
     FinanceModule,
     PurchasingModule,
     RecipesModule,
+    SyncModule,
   ],
 })
 export class AppModule {}

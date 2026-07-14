@@ -1,0 +1,70 @@
+# Machine mère (édition Server) : Postgres MASTER + API locale + sync-agent.
+# L’app desktop Server appelle http://localhost:3000.
+#
+# Première installation :
+#   powershell -ExecutionPolicy Bypass -File infra/scripts/bootstrap-server.ps1
+#
+# Manuel (depuis infra/docker) :
+#   cp .env.server.example .env.server
+#   gcloud auth configure-docker northamerica-northeast1-docker.pkg.dev --quiet
+#   docker compose -f docker-compose.server.yml --env-file .env.server up -d --build
+#
+# Arrêt : docker compose -f docker-compose.server.yml --env-file .env.server down
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: pos_postgres_server
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: pos_db
+    volumes:
+      - postgres_data_server:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pos_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: ${GCP_ARTIFACT_IMAGE:-northamerica-northeast1-docker.pkg.dev/pos-freres-basiles/pos-backend/backend:latest}
+    container_name: pos_backend_server
+    restart: unless-stopped
+    env_file:
+      - .env.server
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/pos_db?schema=public
+      PORT: "3000"
+      SYNC_API_KEY: ${SYNC_API_KEY}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  sync-agent:
+    build:
+      context: ../../apps/sync-agent
+      dockerfile: Dockerfile
+    container_name: pos_sync_agent
+    restart: unless-stopped
+    env_file:
+      - .env.server
+    environment:
+      LOCAL_API_URL: http://backend:3000
+      REMOTE_API_URL: ${REMOTE_API_URL:-http://34.118.154.220}
+      SYNC_API_KEY: ${SYNC_API_KEY}
+      SYNC_INTERVAL_MS: ${SYNC_INTERVAL_MS:-45000}
+      SYNC_NODE_ID: ${SYNC_NODE_ID:-local-mother}
+      LOCAL_ASSETS_DIR: /data/assets
+      GCS_ASSETS_URI: ${GCS_ASSETS_URI:-gs://pos-freres-basiles-assets/sync-assets}
+    volumes:
+      - pos_server_assets:/data/assets
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data_server:
+  pos_server_assets:

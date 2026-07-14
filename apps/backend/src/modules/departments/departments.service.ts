@@ -13,7 +13,10 @@ export class DepartmentsService {
 
   private async resolveCompanyId(explicit?: number) {
     if (explicit) return explicit;
-    const c = await this.prisma.company.findFirst({ orderBy: { id: 'asc' } });
+    const c = await this.prisma.company.findFirst({
+      where: { deletedAt: null },
+      orderBy: { id: 'asc' },
+    });
     if (!c) {
       throw new BadRequestException('Aucune entreprise configurée');
     }
@@ -22,7 +25,11 @@ export class DepartmentsService {
 
   findAll(companyId?: number) {
     return this.prisma.department.findMany({
-      where: companyId !== undefined ? { companyId } : undefined,
+      where: {
+        deletedAt: null,
+        company: { deletedAt: null },
+        ...(companyId !== undefined ? { companyId } : {}),
+      },
       orderBy: { createdAt: 'desc' },
       include: { company: { select: { id: true, name: true } } },
     });
@@ -41,7 +48,9 @@ export class DepartmentsService {
   }
 
   async update(id: number, dto: UpdateDepartmentDto) {
-    const existing = await this.prisma.department.findUnique({ where: { id } });
+    const existing = await this.prisma.department.findFirst({
+      where: { id, deletedAt: null },
+    });
     if (!existing) {
       throw new NotFoundException('Rayon introuvable');
     }
@@ -58,10 +67,17 @@ export class DepartmentsService {
   }
 
   async remove(id: number) {
-    const existing = await this.prisma.department.findUnique({ where: { id } });
+    const existing = await this.prisma.department.findFirst({
+      where: { id, deletedAt: null },
+    });
     if (!existing) {
       throw new NotFoundException('Département introuvable');
     }
-    return this.prisma.department.delete({ where: { id } });
+    // Soft delete + libère @@unique([companyId, name]) pour recreations
+    const tombstoneName = `__DEL_${id}__${existing.name}`.slice(0, 190);
+    return this.prisma.department.update({
+      where: { id },
+      data: { deletedAt: new Date(), name: tombstoneName },
+    });
   }
 }

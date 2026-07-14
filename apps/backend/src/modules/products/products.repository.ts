@@ -26,18 +26,18 @@ export class ProductsRepository {
 
   findAll(departmentId?: number) {
     return this.prisma.product.findMany({
-      where:
-        departmentId !== undefined
-          ? { departmentId }
-          : undefined,
+      where: {
+        deletedAt: null,
+        ...(departmentId !== undefined ? { departmentId } : {}),
+      },
       orderBy: { createdAt: 'desc' },
       include: productInclude,
     });
   }
 
   findById(id: number) {
-    return this.prisma.product.findUnique({
-      where: { id },
+    return this.prisma.product.findFirst({
+      where: { id, deletedAt: null },
       include: productInclude,
     });
   }

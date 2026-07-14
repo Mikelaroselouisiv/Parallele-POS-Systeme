@@ -4,6 +4,15 @@ import * as localDb from './local-db-bridge';
 
 const LEGACY_QUEUE_KEY = 'offline_sales_queue';
 
+function ensureClientUuid(payload: CreateSalePayload): CreateSalePayload {
+  if (payload.clientUuid) return payload;
+  const clientUuid =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `sale-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return { ...payload, clientUuid };
+}
+
 /** Migration one-shot : ancienne file localStorage → SQLite. */
 function migrateLegacyQueue() {
   if (typeof localStorage === 'undefined' || !localDb.hasLocalDb()) return;
@@ -12,7 +21,7 @@ function migrateLegacyQueue() {
   try {
     const items = JSON.parse(raw) as CreateSalePayload[];
     for (const item of items) {
-      void localDb.outboxEnqueue(item);
+      void localDb.outboxEnqueue(ensureClientUuid(item));
     }
     localStorage.removeItem(LEGACY_QUEUE_KEY);
   } catch {
@@ -22,12 +31,13 @@ function migrateLegacyQueue() {
 
 export async function enqueueSale(payload: CreateSalePayload) {
   migrateLegacyQueue();
+  const withUuid = ensureClientUuid(payload);
   if (localDb.hasLocalDb()) {
-    await localDb.outboxEnqueue(payload);
+    await localDb.outboxEnqueue(withUuid);
     return;
   }
   const queue = readLegacyQueue();
-  queue.push(payload);
+  queue.push(withUuid);
   localStorage.setItem(LEGACY_QUEUE_KEY, JSON.stringify(queue));
 }
 
@@ -39,7 +49,8 @@ export async function syncSalesQueue() {
     let synced = 0;
     for (const row of rows) {
       try {
-        await createSale(row.payload as CreateSalePayload);
+        const payload = ensureClientUuid(row.payload as CreateSalePayload);
+        await createSale(payload);
         await localDb.outboxRemove(row.id);
         synced += 1;
       } catch {
@@ -56,10 +67,10 @@ export async function syncSalesQueue() {
   const remaining: CreateSalePayload[] = [];
   for (const item of queue) {
     try {
-      await createSale(item);
+      await createSale(ensureClientUuid(item));
       synced += 1;
     } catch {
-      remaining.push(item);
+      remaining.push(ensureClientUuid(item));
     }
   }
   localStorage.setItem(LEGACY_QUEUE_KEY, JSON.stringify(remaining));

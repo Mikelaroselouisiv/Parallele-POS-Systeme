@@ -12,9 +12,9 @@ import { UpdatePrinterDto } from './dto/update-printer.dto';
 const companyListInclude = {
   _count: {
     select: {
-      products: true,
-      users: true,
-      departments: true,
+      products: { where: { deletedAt: null } },
+      users: { where: { deletedAt: null } },
+      departments: { where: { deletedAt: null } },
     },
   },
 } as const;
@@ -24,23 +24,32 @@ export class CompanyService {
   constructor(private readonly prisma: PrismaService) {}
 
   private async firstCompanyId() {
-    const c = await this.prisma.company.findFirst({ orderBy: { id: 'asc' }, select: { id: true } });
+    const c = await this.prisma.company.findFirst({
+      where: { deletedAt: null },
+      orderBy: { id: 'asc' },
+      select: { id: true },
+    });
     return c?.id ?? null;
   }
 
   findAll() {
     return this.prisma.company.findMany({
+      where: { deletedAt: null },
       orderBy: { id: 'asc' },
       include: companyListInclude,
     });
   }
 
   async findOne(id: number) {
-    const c = await this.prisma.company.findUnique({
-      where: { id },
+    const c = await this.prisma.company.findFirst({
+      where: { id, deletedAt: null },
       include: {
         _count: {
-          select: { products: true, users: true, departments: true },
+          select: {
+            products: { where: { deletedAt: null } },
+            users: { where: { deletedAt: null } },
+            departments: { where: { deletedAt: null } },
+          },
         },
       },
     });
@@ -92,7 +101,11 @@ export class CompanyService {
       },
       include: {
         _count: {
-          select: { products: true, users: true, departments: true },
+          select: {
+            products: { where: { deletedAt: null } },
+            users: { where: { deletedAt: null } },
+            departments: { where: { deletedAt: null } },
+          },
         },
       },
     });
@@ -101,8 +114,8 @@ export class CompanyService {
   async remove(id: number) {
     await this.ensureExists(id);
     const [products, users] = await Promise.all([
-      this.prisma.product.count({ where: { companyId: id } }),
-      this.prisma.user.count({ where: { companyId: id } }),
+      this.prisma.product.count({ where: { companyId: id, deletedAt: null } }),
+      this.prisma.user.count({ where: { companyId: id, deletedAt: null } }),
     ]);
     if (products > 0) {
       throw new BadRequestException(
@@ -114,13 +127,34 @@ export class CompanyService {
         'Impossible de supprimer : des utilisateurs sont rattachés à cette entreprise.',
       );
     }
-    return this.prisma.company.delete({
-      where: { id },
+    // Soft delete (tombstone syncable) + soft-delete des départements orphelins.
+    return this.prisma.$transaction(async (tx) => {
+      const departments = await tx.department.findMany({
+        where: { companyId: id, deletedAt: null },
+        select: { id: true, name: true },
+      });
+      for (const dept of departments) {
+        await tx.department.update({
+          where: { id: dept.id },
+          data: {
+            deletedAt: new Date(),
+            name: `__DEL_${dept.id}__${dept.name}`.slice(0, 190),
+          },
+        });
+      }
+      return tx.company.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+        include: companyListInclude,
+      });
     });
   }
 
   private async ensureExists(id: number) {
-    const c = await this.prisma.company.findUnique({ where: { id }, select: { id: true } });
+    const c = await this.prisma.company.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true },
+    });
     if (!c) {
       throw new NotFoundException('Entreprise introuvable');
     }
@@ -128,6 +162,7 @@ export class CompanyService {
 
   getProfile() {
     return this.prisma.company.findFirst({
+      where: { deletedAt: null },
       orderBy: { id: 'asc' },
     });
   }
@@ -157,7 +192,9 @@ export class CompanyService {
   /** Sans departmentId : premier profil trouvé, ou défaut pour le 1er département. */
   async getPrinterSettings(departmentId?: number) {
     if (departmentId != null) {
-      const dept = await this.prisma.department.findUnique({ where: { id: departmentId } });
+      const dept = await this.prisma.department.findFirst({
+        where: { id: departmentId, deletedAt: null },
+      });
       if (!dept) {
         throw new NotFoundException('Département introuvable');
       }
@@ -168,13 +205,18 @@ export class CompanyService {
     }
     const row = await this.prisma.departmentPrinterProfile.findFirst({ orderBy: { id: 'asc' } });
     if (row) return row;
-    const d = await this.prisma.department.findFirst({ orderBy: { id: 'asc' } });
+    const d = await this.prisma.department.findFirst({
+      where: { deletedAt: null },
+      orderBy: { id: 'asc' },
+    });
     if (!d) return null;
     return { id: 0, ...this.printerDefaults(d.id) };
   }
 
   async updatePrinterSettings(dto: UpdatePrinterDto) {
-    const dept = await this.prisma.department.findUnique({ where: { id: dto.departmentId } });
+    const dept = await this.prisma.department.findFirst({
+      where: { id: dto.departmentId, deletedAt: null },
+    });
     if (!dept) {
       throw new NotFoundException('Département introuvable');
     }

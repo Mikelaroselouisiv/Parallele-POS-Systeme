@@ -17,7 +17,23 @@ export class SalesService {
   ) {}
 
   async create(createSaleDto: CreateSaleDto, userId?: number) {
+    if (createSaleDto.clientUuid) {
+      const existing = await this.prisma.sale.findUnique({
+        where: { clientUuid: createSaleDto.clientUuid },
+        select: { id: true },
+      });
+      if (existing) return existing;
+    }
+
     return this.prisma.$transaction(async (tx) => {
+      if (createSaleDto.clientUuid) {
+        const raced = await tx.sale.findUnique({
+          where: { clientUuid: createSaleDto.clientUuid },
+          select: { id: true },
+        });
+        if (raced) return raced;
+      }
+
       const saleItemsData: Prisma.SaleItemCreateWithoutSaleInput[] = [];
       let total = 0;
       let firstCompanyId: number | null = null;
@@ -130,11 +146,12 @@ export class SalesService {
       const storeId = createSaleDto.storeId ?? null;
       const registerId = createSaleDto.registerId ?? null;
 
+      const clientUuid = createSaleDto.clientUuid ?? null;
       const insertedRows = await tx.$queryRaw<Array<{ id: number }>>`
         INSERT INTO "Sale"
-          ("total", "subtotal", "tax", "cashier", "userId", "storeId", "registerId", "updatedAt")
+          ("total", "subtotal", "tax", "cashier", "userId", "storeId", "registerId", "clientUuid", "updatedAt")
         VALUES
-          (${total}, ${total}, 0, ${cashier}, ${userId ?? null}, ${storeId}, ${registerId}, NOW())
+          (${total}, ${total}, 0, ${cashier}, ${userId ?? null}, ${storeId}, ${registerId}, ${clientUuid}, NOW())
         RETURNING "id";
       `;
       const saleId = insertedRows?.[0]?.id;

@@ -307,8 +307,9 @@ export class ProductsService {
         'Impossible de supprimer : ce produit figure déjà dans des ventes.',
       );
     }
-    return this.prisma.product.delete({
+    return this.prisma.product.update({
       where: { id },
+      data: { deletedAt: new Date() },
     });
   }
 }

@@ -1,6 +1,7 @@
-# Build Docker backend and push it to Google Artifact Registry.
+# Build Docker backend and push it to Google Artifact Registry, then deploy to the GCP VM.
 # Required GitHub secrets: GCP_SA_KEY, GCP_PROJECT_ID.
 # Required GitHub variables: GCP_REGION, GCP_ARTIFACT_REPO.
+# Optional GitHub variables: GCP_VM_NAME (default pos-api), GCP_VM_ZONE (default northamerica-northeast1-a).
 
 name: Backend - build and push to GCP
 
@@ -10,6 +11,8 @@ on:
     paths:
       - "apps/backend/**"
       - "infra/docker/Dockerfile"
+      - "infra/docker/docker-compose.gcp.yml"
+      - "infra/scripts/gcp-deploy-remote.sh"
       - ".github/workflows/backend-gcp.yml"
   workflow_dispatch:
 
@@ -17,6 +20,8 @@ env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   GCP_ARTIFACT_REPO: ${{ vars.GCP_ARTIFACT_REPO }}
+  GCP_VM_NAME: ${{ vars.GCP_VM_NAME }}
+  GCP_VM_ZONE: ${{ vars.GCP_VM_ZONE }}
   IMAGE_NAME: backend
 
 jobs:
@@ -53,3 +58,26 @@ jobs:
             apps/backend
           docker push "${FULL_IMAGE}:${IMAGE_TAG}"
           docker push "${FULL_IMAGE}:latest"
+
+  deploy-gcp:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to GCP VM
+        env:
+          GCP_VM_NAME: ${{ vars.GCP_VM_NAME != '' && vars.GCP_VM_NAME || 'pos-api' }}
+          GCP_VM_ZONE: ${{ vars.GCP_VM_ZONE != '' && vars.GCP_VM_ZONE || 'northamerica-northeast1-a' }}
+        run: bash infra/scripts/gcp-deploy-remote.sh

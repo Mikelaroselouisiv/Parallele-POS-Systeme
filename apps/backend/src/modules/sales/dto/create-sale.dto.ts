@@ -6,7 +6,9 @@ import {
   IsInt,
   IsNumber,
   IsOptional,
+  IsString,
   Min,
+  MinLength,
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
@@ -67,4 +69,10 @@ export class CreateSaleDto {
   @IsOptional()
   // Nom client (provenant de la fiche POS)
   clientName?: string;
+
+  /** UUID client (offline) — idempotence : rejouer la même vente ne crée pas de doublon. */
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  clientUuid?: string;
 }

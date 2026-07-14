@@ -23,18 +23,32 @@ import type {
   ProductRecipeDetail,
   PurchaseOrderListItem,
 } from '../types/api';
-import { PUBLIC_API_BASE_URL } from '../config/public-api';
+import { resolveApiBaseUrl } from '../config/resolve-api-base-url';
 
-/** Prod (build) : `PUBLIC_API_BASE_URL` ; dev : localhost. Surcharge optionnelle : `VITE_API_URL` au build. */
-const API_BASE_URL = (import.meta.env.VITE_API_URL?.trim() ||
-  (import.meta.env.PROD ? PUBLIC_API_BASE_URL : 'http://localhost:3000')) as string;
 const TOKEN_KEY = 'pos_token';
 const REFRESH_TOKEN_KEY = 'pos_refresh_token';
 const USER_KEY = 'pos_user';
 
-const api = axios.create({
-  baseURL: API_BASE_URL,
-});
+const api = axios.create();
+let apiBaseUrl = '';
+let apiInitPromise: Promise<string> | null = null;
+
+/** Résout l’URL selon l’édition (server / remote) avant le premier appel API. */
+export function initApi(): Promise<string> {
+  if (apiBaseUrl) return Promise.resolve(apiBaseUrl);
+  if (!apiInitPromise) {
+    apiInitPromise = resolveApiBaseUrl().then((url) => {
+      apiBaseUrl = url;
+      api.defaults.baseURL = url;
+      return url;
+    });
+  }
+  return apiInitPromise;
+}
+
+export function getApiBaseUrl(): string {
+  return apiBaseUrl;
+}
 
 api.interceptors.request.use((config) => {
   const token = readToken();

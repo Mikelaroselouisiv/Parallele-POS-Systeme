@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 const userPublicSelect = {
   id: true,
+  uuid: true,
   email: true,
   role: true,
   fullName: true,
@@ -12,9 +13,11 @@ const userPublicSelect = {
   companyId: true,
   departmentId: true,
   createdAt: true,
+  updatedAt: true,
+  deletedAt: true,
 } satisfies Prisma.UserSelect;
 
-export type SafeUser = Omit<User, 'password'>;
+export type SafeUser = Prisma.UserGetPayload<{ select: typeof userPublicSelect }>;
 
 @Injectable()
 export class UsersRepository {
@@ -26,20 +29,21 @@ export class UsersRepository {
 
   findAll(): Promise<SafeUser[]> {
     return this.prisma.user.findMany({
+      where: { deletedAt: null },
       orderBy: { createdAt: 'desc' },
       select: userPublicSelect,
     });
   }
 
   findById(id: number): Promise<SafeUser | null> {
-    return this.prisma.user.findUnique({
-      where: { id },
+    return this.prisma.user.findFirst({
+      where: { id, deletedAt: null },
       select: userPublicSelect,
     });
   }
 
   findByPhone(phone: string): Promise<User | null> {
-    return this.prisma.user.findFirst({ where: { phone } });
+    return this.prisma.user.findFirst({ where: { phone, deletedAt: null } });
   }
 
   update(id: number, data: Prisma.UserUpdateInput): Promise<SafeUser> {
@@ -51,8 +55,9 @@ export class UsersRepository {
   }
 
   delete(id: number): Promise<SafeUser> {
-    return this.prisma.user.delete({
+    return this.prisma.user.update({
       where: { id },
+      data: { deletedAt: new Date(), isActive: false },
       select: userPublicSelect,
     });
   }

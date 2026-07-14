@@ -370,6 +370,10 @@ export function PosPage() {
     if (activeCart.length === 0) return;
     const total = cartTotal;
     const clientName = activeDraft.name || null;
+    const clientUuid =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `sale-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const payload = {
       items: activeCart.map((l) => ({
         productSaleUnitId: l.productSaleUnitId,
@@ -377,6 +381,7 @@ export function PosPage() {
       })),
       payments: [{ method: activeDraft.paymentMethod, amount: total }],
       clientName,
+      clientUuid,
     };
     try {
       if (!navigator.onLine) {

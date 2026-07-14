@@ -1,0 +1,59 @@
+{
+  "appId": "com.freresbasiles.pos.desktop.remote",
+  "productName": "POS Freres Basiles Remote",
+  "artifactName": "POS-Freres-Basiles-Remote-1.0.0.${ext}",
+  "copyright": "Copyright © 2026",
+  "icon": "build/icon.ico",
+  "directories": {
+    "output": "release",
+    "buildResources": "build"
+  },
+  "files": [
+    "dist/**/*",
+    "src/main/**/*",
+    "package.json",
+    "build/icon.ico",
+    "build/icon.png"
+  ],
+  "asarUnpack": [
+    "**/node_modules/sql.js/**"
+  ],
+  "afterPack": "scripts/after-pack.cjs",
+  "extraMetadata": {
+    "edition": "remote",
+    "version": "1.0.0"
+  },
+  "extraResources": [
+    {
+      "from": "build/icon.ico",
+      "to": "icon.ico"
+    },
+    {
+      "from": "build/icon.png",
+      "to": "icon.png"
+    }
+  ],
+  "publish": {
+    "provider": "generic",
+    "url": "https://storage.googleapis.com/pos-freres-basiles-assets/installers/remote"
+  },
+  "win": {
+    "icon": "build/icon.ico",
+    "forceCodeSigning": false,
+    "signAndEditExecutable": false,
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "installerIcon": "build/icon.ico",
+    "uninstallerIcon": "build/icon.ico",
+    "installerHeaderIcon": "build/icon.ico"
+  }
+}

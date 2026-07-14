@@ -17,10 +17,10 @@ La persistance utilise **sql.js** (SQLite compilé en WebAssembly, sans module n
 
 ## Logo & identité visuelle
 
-- **Fichier source** (monorepo) : **`assets/icons/icon.png`** (PNG **256×256** ou plus pour l’exe Windows).
-- Au `npm run dev` / `npm run build`, Vite **copie** ce fichier vers **`apps/desktop/public/icon.png`** et **`apps/desktop/build/icon.png`** (fenêtre, `dist/`, et icône de l’installateur NSIS).
-- Pour régénérer un **placeholder** (texte « POS ») : depuis **`apps/desktop`**, **`npm run icons`** (PowerShell Windows).
-- Pour changer le logo : remplacez **`assets/icons/icon.png`**, puis relancez le dev ou le build.
+- **Fichier source unique** : **`assets/icons/icon.png`** (votre logo — ne jamais écrasé par un script).
+- **`npm run icons`** : copie vers `build/` + `public/` et génère les `.ico` Windows.
+- Vite resynchronise le PNG au `npm run dev` / `npm run build`.
+- **Barre des tâches en dev** : icône Electron ; logo FB complet après installateur packagé.
 
 ## Structure
 

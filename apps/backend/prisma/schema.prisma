@@ -57,8 +57,15 @@ enum GoodsReceiptStatus {
   POSTED
 }
 
+/// Direction / curseur de sync (métronome local ↔ GCP).
+enum SyncDirection {
+  PULL
+  PUSH
+}
+
 model Company {
   id               Int      @id @default(autoincrement())
+  uuid             String   @unique @default(uuid())
   name             String
   legalName        String?
   address          String   @default("")
@@ -80,16 +87,21 @@ model Company {
   purchaseOrders   PurchaseOrder[]
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  deletedAt        DateTime?
 }
 
 model PackagingUnit {
   id               Int               @id @default(autoincrement())
+  uuid             String            @unique @default(uuid())
   departmentId     Int
   department       Department        @relation(fields: [departmentId], references: [id], onDelete: Cascade)
   code             String
   label            String
   sortOrder        Int               @default(0)
   productSaleUnits ProductSaleUnit[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  deletedAt        DateTime?
 
   @@unique([departmentId, code])
 }
@@ -97,10 +109,11 @@ model PackagingUnit {
 /// Département : unité autonome au sein de l’entreprise (stock, ventes, suivi) ; les produits y sont rattachés.
 model Department {
   id             Int                       @id @default(autoincrement())
-  companyId    Int
-  company      Company                   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  name         String
-  description  String?
+  uuid           String                    @unique @default(uuid())
+  companyId      Int
+  company        Company                   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
   users          User[]
   products       Product[]
   packagingUnits PackagingUnit[]
@@ -109,6 +122,8 @@ model Department {
   purchaseOrders    PurchaseOrder[]
   goodsReceipts     GoodsReceipt[]
   createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+  deletedAt      DateTime?
 
   @@unique([companyId, name])
 }
@@ -116,6 +131,7 @@ model Department {
 /// Réglages ticket thermique par département (entête, pied, matériel, texte de test).
 model DepartmentPrinterProfile {
   id                  Int        @id @default(autoincrement())
+  uuid                String     @unique @default(uuid())
   departmentId        Int        @unique
   department          Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
   paperWidth          Int        @default(58)
@@ -128,10 +144,12 @@ model DepartmentPrinterProfile {
   previewSampleBody   String?
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
+  deletedAt           DateTime?
 }
 
 model Store {
   id        Int       @id @default(autoincrement())
+  uuid      String    @unique @default(uuid())
   companyId Int?
   company   Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
   name      String
@@ -139,19 +157,25 @@ model Store {
   registers Register[]
   sales     Sale[]
   createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
 }
 
 model Register {
   id        Int      @id @default(autoincrement())
+  uuid      String   @unique @default(uuid())
   code      String   @unique
   storeId   Int
   store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
   sales     Sale[]
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
 }
 
 model Product {
   id           Int               @id @default(autoincrement())
+  uuid         String            @unique @default(uuid())
   companyId    Int
   company      Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
   departmentId Int?
@@ -174,10 +198,13 @@ model Product {
   recipeAsParent     ProductRecipe? @relation("RecipeParent")
   recipeAsComponent  RecipeComponent[] @relation("RecipeComponent")
   createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  deletedAt    DateTime?
 }
 
 model ProductSaleUnit {
   id              Int                   @id @default(autoincrement())
+  uuid            String                @unique @default(uuid())
   productId       Int
   product         Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
   packagingUnitId Int
@@ -189,6 +216,9 @@ model ProductSaleUnit {
   isDefault       Boolean               @default(false)
   saleItems       SaleItem[]
   volumePrices    ProductVolumePrice[]
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  deletedAt       DateTime?
 
   @@unique([productId, packagingUnitId])
 }
@@ -196,17 +226,24 @@ model ProductSaleUnit {
 /// Rabais par volume : à partir de minQuantity (inclus), le prix unitaire devient unitPrice.
 model ProductVolumePrice {
   id                Int             @id @default(autoincrement())
+  uuid              String          @unique @default(uuid())
   productSaleUnitId Int
   productSaleUnit   ProductSaleUnit @relation(fields: [productSaleUnitId], references: [id], onDelete: Cascade)
   minQuantity       Decimal         @db.Decimal(12, 4)
   unitPrice         Decimal         @db.Decimal(12, 2)
   sortOrder         Int             @default(0)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  deletedAt         DateTime?
 
   @@unique([productSaleUnitId, minQuantity])
 }
 
 model Sale {
   id         Int         @id @default(autoincrement())
+  uuid       String      @unique @default(uuid())
+  /// UUID généré côté client (offline) pour idempotence push.
+  clientUuid String?     @unique
   total      Decimal     @db.Decimal(12, 2)
   subtotal   Decimal     @default(0) @db.Decimal(12, 2)
   tax        Decimal     @default(0) @db.Decimal(12, 2)
@@ -225,10 +262,12 @@ model Sale {
   financeEntry FinanceEntry?
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
+  deletedAt  DateTime?
 }
 
 model SaleItem {
   id                Int              @id @default(autoincrement())
+  uuid              String           @unique @default(uuid())
   quantity          Decimal          @db.Decimal(12, 4)
   baseQuantity      Decimal          @db.Decimal(12, 4)
   unitPrice         Decimal          @db.Decimal(12, 2)
@@ -241,20 +280,26 @@ model SaleItem {
   product           Product          @relation(fields: [productId], references: [id])
   productSaleUnit   ProductSaleUnit? @relation(fields: [productSaleUnitId], references: [id])
   createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  deletedAt         DateTime?
 }
 
 model Payment {
   id        Int           @id @default(autoincrement())
+  uuid      String        @unique @default(uuid())
   saleId    Int
   amount    Decimal       @db.Decimal(12, 2)
   method    PaymentMethod
   reference String?
   createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  deletedAt DateTime?
   sale      Sale          @relation(fields: [saleId], references: [id], onDelete: Cascade)
 }
 
 model StockMovement {
   id          Int          @id @default(autoincrement())
+  uuid        String       @unique @default(uuid())
   productId   Int
   quantity    Decimal      @db.Decimal(12, 4)
   type        MovementType
@@ -267,11 +312,14 @@ model StockMovement {
   goodsReceiptId Int?
   goodsReceipt   GoodsReceipt? @relation(fields: [goodsReceiptId], references: [id], onDelete: SetNull)
   createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?
 }
 
 /// Session d’inventaire physique par département (brouillon → validation → ajustements de stock).
 model InventorySession {
   id             Int                    @id @default(autoincrement())
+  uuid           String                 @unique @default(uuid())
   departmentId   Int
   department     Department             @relation(fields: [departmentId], references: [id], onDelete: Cascade)
   status         InventorySessionStatus @default(DRAFT)
@@ -284,10 +332,12 @@ model InventorySession {
   stockMovements StockMovement[]
   createdAt      DateTime               @default(now())
   updatedAt      DateTime               @updatedAt
+  deletedAt      DateTime?
 }
 
 model InventoryLine {
   id              Int               @id @default(autoincrement())
+  uuid            String            @unique @default(uuid())
   sessionId       Int
   session         InventorySession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   productId       Int
@@ -298,12 +348,14 @@ model InventoryLine {
   note            String?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
+  deletedAt       DateTime?
 
   @@unique([sessionId, productId])
 }
 
 model PurchaseOrder {
   id            Int                 @id @default(autoincrement())
+  uuid          String              @unique @default(uuid())
   companyId     Int
   company       Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
   departmentId  Int
@@ -318,16 +370,21 @@ model PurchaseOrder {
   goodsReceipts GoodsReceipt[]
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
+  deletedAt     DateTime?
 }
 
 model PurchaseOrderLine {
   id              Int           @id @default(autoincrement())
+  uuid            String        @unique @default(uuid())
   purchaseOrderId Int
   purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   productId       Int
   product         Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
   quantityOrdered Decimal       @db.Decimal(12, 4)
   unitPriceEst    Decimal?      @db.Decimal(12, 2)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  deletedAt       DateTime?
 
   @@unique([purchaseOrderId, productId])
 }
@@ -335,6 +392,7 @@ model PurchaseOrderLine {
 /// Réception marchandise : brouillon → POSTED → entrées stock + coût moyen pondéré.
 model GoodsReceipt {
   id              Int                   @id @default(autoincrement())
+  uuid            String                @unique @default(uuid())
   purchaseOrderId Int?
   purchaseOrder   PurchaseOrder?        @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
   departmentId    Int
@@ -348,16 +406,21 @@ model GoodsReceipt {
   stockMovements  StockMovement[]
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
+  deletedAt       DateTime?
 }
 
 model GoodsReceiptLine {
   id             Int          @id @default(autoincrement())
+  uuid           String       @unique @default(uuid())
   goodsReceiptId Int
   goodsReceipt   GoodsReceipt @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
   productId      Int
   product        Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
   quantity       Decimal      @db.Decimal(12, 4)
   unitCost       Decimal      @db.Decimal(12, 2)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
 
   @@unique([goodsReceiptId, productId])
 }
@@ -365,35 +428,48 @@ model GoodsReceiptLine {
 /// Recette (BOM) : produit parent (souvent service) → composants MP consommés par unité de base du parent.
 model ProductRecipe {
   id              Int               @id @default(autoincrement())
+  uuid            String            @unique @default(uuid())
   parentProductId Int               @unique
   parentProduct   Product           @relation("RecipeParent", fields: [parentProductId], references: [id], onDelete: Cascade)
   components      RecipeComponent[]
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  deletedAt       DateTime?
 }
 
 model RecipeComponent {
   id             Int           @id @default(autoincrement())
+  uuid           String        @unique @default(uuid())
   recipeId       Int
   recipe         ProductRecipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
   componentProductId Int
   componentProduct Product     @relation("RecipeComponent", fields: [componentProductId], references: [id], onDelete: Restrict)
   /// Quantité de MP consommée par 1 unité de base du produit parent (même unité que Product.stock).
   quantityPerParentBaseUnit Decimal @db.Decimal(12, 4)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
 
   @@unique([recipeId, componentProductId])
 }
 
 model ExpenseCategory {
-  id        Int     @id @default(autoincrement())
+  id        Int      @id @default(autoincrement())
+  uuid      String   @unique @default(uuid())
   companyId Int
-  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   name      String
   entries   FinanceEntry[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
 
   @@unique([companyId, name])
 }
 
 model FinanceEntry {
   id          Int               @id @default(autoincrement())
+  uuid        String            @unique @default(uuid())
   type        FinanceType
   amount      Decimal           @db.Decimal(12, 2)
   description String
@@ -404,21 +480,27 @@ model FinanceEntry {
   saleId      Int?              @unique
   sale        Sale?             @relation(fields: [saleId], references: [id], onDelete: SetNull)
   createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  deletedAt   DateTime?
 }
 
 model CashClosure {
-  id             Int      @id @default(autoincrement())
+  id             Int       @id @default(autoincrement())
+  uuid           String    @unique @default(uuid())
   registerId     Int?
-  expectedAmount Decimal  @db.Decimal(12, 2)
-  countedAmount  Decimal  @db.Decimal(12, 2)
-  variance       Decimal  @db.Decimal(12, 2)
+  expectedAmount Decimal   @db.Decimal(12, 2)
+  countedAmount  Decimal   @db.Decimal(12, 2)
+  variance       Decimal   @db.Decimal(12, 2)
   createdById    Int?
-  createdBy      User?    @relation("CashClosureCreatedBy", fields: [createdById], references: [id])
-  createdAt      DateTime @default(now())
+  createdBy      User?     @relation("CashClosureCreatedBy", fields: [createdById], references: [id])
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
 }
 
 model User {
   id           Int            @id @default(autoincrement())
+  uuid         String         @unique @default(uuid())
   email        String?
   phone        String         @unique
   password     String
@@ -439,6 +521,8 @@ model User {
   financeEntries FinanceEntry[] @relation("FinanceEntryUser")
   cashClosures CashClosure[] @relation("CashClosureCreatedBy")
   createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  deletedAt    DateTime?
 }
 
 model Session {
@@ -453,6 +537,7 @@ model Session {
 
 model AuditLog {
   id        Int      @id @default(autoincrement())
+  uuid      String   @unique @default(uuid())
   userId    Int?
   action    String
   entity    String
@@ -460,4 +545,24 @@ model AuditLog {
   metadata  Json?
   user      User?    @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
+}
+
+/// État du métronome sync (un curseur par entité / direction / nœud distant).
+model SyncState {
+  id             Int           @id @default(autoincrement())
+  /// Identifiant du nœud distant (ex. "gcp", "local-mother").
+  remoteNodeId   String
+  /// Nom d’entité sync (ex. "Product", "Sale", "Asset").
+  entity         String
+  direction      SyncDirection
+  /// Curseur ISO (updatedAt) du dernier enregistrement traité avec succès.
+  lastCursorAt   DateTime?
+  lastSuccessAt  DateTime?
+  lastError      String?
+  metadata       Json?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([remoteNodeId, entity, direction])
+  @@index([remoteNodeId, entity])
 }

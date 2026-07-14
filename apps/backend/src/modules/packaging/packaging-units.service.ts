@@ -15,12 +15,14 @@ export class PackagingUnitsService {
     if (!Number.isFinite(departmentId) || departmentId < 1) {
       throw new BadRequestException('departmentId est requis et doit être un identifiant valide.');
     }
-    const dept = await this.prisma.department.findUnique({ where: { id: departmentId } });
+    const dept = await this.prisma.department.findFirst({
+      where: { id: departmentId, deletedAt: null },
+    });
     if (!dept) {
       throw new NotFoundException('Département introuvable');
     }
     return this.prisma.packagingUnit.findMany({
-      where: { departmentId },
+      where: { departmentId, deletedAt: null },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
       include: {
         department: {
@@ -36,11 +38,19 @@ export class PackagingUnitsService {
   }
 
   async create(dto: CreatePackagingUnitDto) {
-    const dept = await this.prisma.department.findUnique({ where: { id: dto.departmentId } });
+    const dept = await this.prisma.department.findFirst({
+      where: { id: dto.departmentId, deletedAt: null },
+    });
     if (!dept) {
       throw new NotFoundException('Département introuvable');
     }
     const code = dto.code.trim().toUpperCase();
+    const clash = await this.prisma.packagingUnit.findFirst({
+      where: { departmentId: dto.departmentId, code, deletedAt: null },
+    });
+    if (clash) {
+      throw new BadRequestException('Ce code existe déjà pour ce département.');
+    }
     return this.prisma.packagingUnit.create({
       data: {
         departmentId: dto.departmentId,
@@ -62,7 +72,9 @@ export class PackagingUnitsService {
   }
 
   async update(id: number, dto: UpdatePackagingUnitDto) {
-    const existing = await this.prisma.packagingUnit.findUnique({ where: { id } });
+    const existing = await this.prisma.packagingUnit.findFirst({
+      where: { id, deletedAt: null },
+    });
     if (!existing) {
       throw new NotFoundException('Conditionnement introuvable');
     }
@@ -74,7 +86,9 @@ export class PackagingUnitsService {
           'Impossible de changer le département : ce conditionnement est déjà utilisé par des produits.',
         );
       }
-      const dept = await this.prisma.department.findUnique({ where: { id: dto.departmentId } });
+      const dept = await this.prisma.department.findFirst({
+        where: { id: dto.departmentId, deletedAt: null },
+      });
       if (!dept) {
         throw new NotFoundException('Département introuvable');
       }
@@ -89,6 +103,7 @@ export class PackagingUnitsService {
         where: {
           departmentId: targetDeptId,
           code: targetCode,
+          deletedAt: null,
           NOT: { id },
         },
       });
@@ -119,7 +134,9 @@ export class PackagingUnitsService {
   }
 
   async remove(id: number) {
-    const existing = await this.prisma.packagingUnit.findUnique({ where: { id } });
+    const existing = await this.prisma.packagingUnit.findFirst({
+      where: { id, deletedAt: null },
+    });
     if (!existing) {
       throw new NotFoundException('Conditionnement introuvable');
     }
@@ -129,6 +146,11 @@ export class PackagingUnitsService {
         'Impossible de supprimer : utilisé par des unités de vente produits.',
       );
     }
-    return this.prisma.packagingUnit.delete({ where: { id } });
+    // Soft delete + libère @@unique([departmentId, code])
+    const tombstoneCode = `__DEL_${id}_${existing.code}`.slice(0, 60).toUpperCase();
+    return this.prisma.packagingUnit.update({
+      where: { id },
+      data: { deletedAt: new Date(), code: tombstoneCode },
+    });
   }
 }

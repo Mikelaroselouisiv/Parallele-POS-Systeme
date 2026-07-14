@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
   type CompanyCreatePayload,
@@ -92,6 +92,11 @@ export function ConfigPage() {
   useEffect(() => {
     void load().catch(() => setMsg('Erreur chargement configuration', { persist: true }));
   }, [isAdmin]);
+
+  // Rafraîchir les listes partagées (imprimantes / utilisateurs) à chaque changement d’onglet
+  useEffect(() => {
+    void load().catch(() => undefined);
+  }, [tab]);
 
   useEffect(() => {
     if (printerDepartmentId === '') {
@@ -261,6 +266,17 @@ export function ConfigPage() {
         <p className="page-lead">
           Entreprise (et départements intégrés), matériel, conditionnements de vente, accès utilisateurs.
         </p>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={() =>
+            void load()
+              .then(() => setMsg('Listes actualisées.'))
+              .catch(() => setMsg('Erreur actualisation.', { persist: true }))
+          }
+        >
+          Actualiser
+        </button>
       </header>
 
       <div className="config-tabs">
@@ -288,6 +304,7 @@ export function ConfigPage() {
       {tab === 'company' && (
         <CompaniesSection
           onMessage={(m, o) => setMsg(m, o)}
+          onCatalogChanged={() => load()}
         />
       )}
 
@@ -537,7 +554,9 @@ export function ConfigPage() {
           items={users}
           companies={companies}
           departments={departments}
-          onChange={async () => setUsers(await getUsers())}
+          onChange={async () => {
+            await load();
+          }}
         />
       )}
     </div>
@@ -604,8 +623,10 @@ function formStateToPayload(f: CompanyFormState): CompanyCreatePayload {
 
 function CompaniesSection({
   onMessage,
+  onCatalogChanged,
 }: {
   onMessage: (m: string, options?: AutoClearMessageOptions) => void;
+  onCatalogChanged: () => Promise<void>;
 }) {
   const { can } = useAuth();
   const canCreate = can(['ADMIN']);
@@ -615,11 +636,13 @@ function CompaniesSection({
   const [rows, setRows] = useState<CompanyListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<
-    null | { mode: 'create' } | { mode: 'edit'; row: CompanyListItem }
+    null | { mode: 'create'; key: number } | { mode: 'edit'; row: CompanyListItem; key: number }
   >(null);
+  const [pendingDelete, setPendingDelete] = useState<CompanyListItem | null>(null);
+  const [modalSeq, setModalSeq] = useState(0);
 
-  async function loadRows() {
-    setLoading(true);
+  async function loadRows(opts?: { silent?: boolean }) {
+    if (!opts?.silent) setLoading(true);
     try {
       const list = await getCompanies();
       setRows(list);
@@ -629,13 +652,49 @@ function CompaniesSection({
       });
       setRows([]);
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
+  }
+
+  async function refreshAll(opts?: { silent?: boolean }) {
+    await loadRows(opts);
+    await onCatalogChanged().catch(() => undefined);
   }
 
   useEffect(() => {
     void loadRows();
   }, []);
+
+  function openCreate() {
+    setModalSeq((n) => n + 1);
+    setModal({ mode: 'create', key: modalSeq + 1 });
+  }
+
+  function openEdit(row: CompanyListItem) {
+    setModalSeq((n) => n + 1);
+    setModal({ mode: 'edit', row, key: modalSeq + 1 });
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    const row = pendingDelete;
+    setPendingDelete(null);
+    try {
+      await deleteCompany(row.id);
+      await refreshAll();
+      onMessage('Entreprise supprimée.');
+    } catch (err: unknown) {
+      const msg =
+        axios.isAxiosError(err) &&
+        err.response?.data &&
+        typeof err.response.data === 'object' &&
+        err.response.data !== null &&
+        'message' in err.response.data
+          ? String((err.response.data as { message: unknown }).message)
+          : 'Suppression impossible.';
+      onMessage(msg, { persist: true });
+    }
+  }
 
   return (
     <div className="card">
@@ -650,11 +709,16 @@ function CompaniesSection({
         }}
       >
         <h2 style={{ margin: 0 }}>Entreprises</h2>
-        {canCreate ? (
-          <button type="button" className="btn btn-primary" onClick={() => setModal({ mode: 'create' })}>
-            Nouvelle entreprise
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => void refreshAll()}>
+            Actualiser
           </button>
-        ) : null}
+          {canCreate ? (
+            <button type="button" className="btn btn-primary" onClick={openCreate}>
+              Nouvelle entreprise
+            </button>
+          ) : null}
+        </div>
       </div>
       <p className="page-lead">
         Chaque entreprise regroupe ses départements (modifier une ligne pour les gérer). Les compteurs : produits,
@@ -687,7 +751,7 @@ function CompaniesSection({
                     <button
                       type="button"
                       className="btn btn-secondary btn-sm"
-                      onClick={() => setModal({ mode: 'edit', row })}
+                      onClick={() => openEdit(row)}
                     >
                       Modifier
                     </button>
@@ -696,23 +760,7 @@ function CompaniesSection({
                     <button
                       type="button"
                       className="btn btn-secondary btn-sm"
-                      onClick={() => {
-                        if (!confirm(`Supprimer « ${row.name} » ?`)) return;
-                        void deleteCompany(row.id)
-                          .then(() => loadRows())
-                          .then(() => onMessage('Entreprise supprimée.'))
-                          .catch((err: unknown) => {
-                            const msg =
-                              axios.isAxiosError(err) &&
-                              err.response?.data &&
-                              typeof err.response.data === 'object' &&
-                              err.response.data !== null &&
-                              'message' in err.response.data
-                                ? String((err.response.data as { message: unknown }).message)
-                                : 'Suppression impossible.';
-                            onMessage(msg, { persist: true });
-                          });
-                      }}
+                      onClick={() => setPendingDelete(row)}
                     >
                       Supprimer
                     </button>
@@ -727,14 +775,39 @@ function CompaniesSection({
         <p className="info-text">Aucune entreprise. Créez-en une ou exécutez le seed Prisma.</p>
       ) : null}
 
+      {pendingDelete ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => setPendingDelete(null)}>
+          <div
+            className="modal card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-company-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="delete-company-title">Supprimer l’entreprise</h2>
+            <p>
+              Confirmer la suppression de « <strong>{pendingDelete.name}</strong> » ?
+            </p>
+            <div className="modal-actions">
+              <button type="button" className="btn btn-ghost" onClick={() => setPendingDelete(null)}>
+                Annuler
+              </button>
+              <button type="button" className="btn btn-primary" onClick={() => void confirmDelete()}>
+                Supprimer
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {modal ? (
         <CompanyFormModal
-          key={modal.mode === 'create' ? 'create' : `edit-${modal.row.id}`}
+          key={modal.key}
           mode={modal.mode}
           editId={modal.mode === 'edit' ? modal.row.id : undefined}
           initial={modal.mode === 'create' ? emptyCompanyFormState() : rowToFormState(modal.row)}
           onClose={() => setModal(null)}
-          onCompanySaved={loadRows}
+          onCompanySaved={() => refreshAll({ silent: true })}
           onNotify={onMessage}
         />
       ) : null}
@@ -763,6 +836,16 @@ function CompanyFormModal({
   );
   const [err, setErr] = useAutoClearMessage();
   const [saving, setSaving] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const timer = window.setTimeout(() => nameInputRef.current?.focus(), 0);
+    return () => {
+      window.clearTimeout(timer);
+      previous?.focus?.();
+    };
+  }, []);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -796,9 +879,17 @@ function CompanyFormModal({
 
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
-      <div className="modal card modal-company" role="dialog" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal card modal-company"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="company-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-heading">
-          <h2>{mode === 'create' ? 'Nouvelle entreprise' : 'Modifier l’entreprise'}</h2>
+          <h2 id="company-modal-title">
+            {mode === 'create' ? 'Nouvelle entreprise' : 'Modifier l’entreprise'}
+          </h2>
           <p className="dept-hint">
             Les départements appartiennent à cette entreprise (ex. services Marriott, unités Cursor). Ils
             servent à classer produits et activités dans Stock.
@@ -807,7 +898,12 @@ function CompanyFormModal({
         <form className="form-grid" onSubmit={(e) => void submit(e)}>
           <label>
             Raison sociale *
-            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+            <input
+              ref={nameInputRef}
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              required
+            />
           </label>
           <label>
             Dénomination légale

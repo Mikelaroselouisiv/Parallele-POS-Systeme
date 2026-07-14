@@ -11,10 +11,15 @@ yarn-error.log*
 # Backend env
 apps/backend/.env
 infra/docker/.env.prod
+infra/docker/.env.server
 
 # Desktop build artifacts
 apps/desktop/release/
 apps/desktop/build/
+apps/desktop/server-stack/images/*.tar
+apps/desktop/server-stack/defaults.env
+apps/desktop/server-stack/.bootstrap-done
+apps/desktop/server-stack/.env.server
 
 # SSH / keys
 *.pem

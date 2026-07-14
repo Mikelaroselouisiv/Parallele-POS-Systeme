@@ -1,0 +1,62 @@
+{
+  "appId": "com.freresbasiles.pos.desktop.server",
+  "productName": "POS Freres Basiles Server",
+  "artifactName": "POS-Freres-Basiles-Server-${version}.${ext}",
+  "copyright": "Copyright © 2026",
+  "icon": "build/icon.ico",
+  "directories": {
+    "output": "release",
+    "buildResources": "build"
+  },
+  "files": [
+    "dist/**/*",
+    "src/main/**/*",
+    "package.json",
+    "build/icon.ico",
+    "build/icon.png"
+  ],
+  "asarUnpack": [
+    "**/node_modules/sql.js/**"
+  ],
+  "afterPack": "scripts/after-pack.cjs",
+  "extraMetadata": {
+    "edition": "server"
+  },
+  "extraResources": [
+    {
+      "from": "build/icon.ico",
+      "to": "icon.ico"
+    },
+    {
+      "from": "build/icon.png",
+      "to": "icon.png"
+    },
+    "server-stack"
+  ],
+  "publish": {
+    "provider": "generic",
+    "url": "https://storage.googleapis.com/pos-freres-basiles-assets/installers/server"
+  },
+  "win": {
+    "icon": "build/icon.ico",
+    "forceCodeSigning": false,
+    "signAndEditExecutable": false,
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "perMachine": true,
+    "allowElevation": true,
+    "selectPerMachineByDefault": true,
+    "installerIcon": "build/icon.ico",
+    "uninstallerIcon": "build/icon.ico",
+    "installerHeaderIcon": "build/icon.ico"
+  }
+}

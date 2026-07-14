@@ -181,6 +181,8 @@ export interface CreateSalePayload {
   items: SaleItemPayload[];
   payments: PaymentPayload[];
   clientName?: string | null;
+  /** UUID client pour idempotence (offline / rejeu). */
+  clientUuid?: string;
 }
 
 export interface SalePaymentRow {

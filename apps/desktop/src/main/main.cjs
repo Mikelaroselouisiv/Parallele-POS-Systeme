@@ -1,17 +1,38 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { printReceipt } = require('./thermal-printer.cjs');
 const localDb = require('./local-db.cjs');
+const { initUpdater } = require('./updater.cjs');
+const { getAppEdition } = require('./edition.cjs');
+const { ensureServerStack } = require('./server-bootstrap.cjs');
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 
 function resolveWindowIcon() {
-  /** Source unique : monorepo `assets/icons/icon.png` (voir README desktop). */
+  if (process.resourcesPath) {
+    const resourceIco = path.join(process.resourcesPath, 'icon.ico');
+    const resourcePng = path.join(process.resourcesPath, 'icon.png');
+    if (process.platform === 'win32' && fs.existsSync(resourceIco)) return resourceIco;
+    if (fs.existsSync(resourcePng)) return resourcePng;
+  }
+
   const fromRepo = path.join(__dirname, '../../../../assets/icons/icon.png');
-  if (fs.existsSync(fromRepo)) return fromRepo;
+  const fromRepoIco = path.join(__dirname, '../../../../assets/icons/icon.ico');
+  const buildIco = path.join(__dirname, '../../build/icon.ico');
+  const publicIco = path.join(__dirname, '../../public/icon.ico');
+  const buildPng = path.join(__dirname, '../../build/icon.png');
   const devPublic = path.join(__dirname, '../../public/icon.png');
   const prodDist = path.join(__dirname, '../../dist/icon.png');
+
+  if (process.platform === 'win32') {
+    if (fs.existsSync(buildIco)) return buildIco;
+    if (fs.existsSync(publicIco)) return publicIco;
+    if (fs.existsSync(fromRepoIco)) return fromRepoIco;
+  }
+
+  if (fs.existsSync(fromRepo)) return fromRepo;
+  if (fs.existsSync(buildPng)) return buildPng;
   const p = isDev ? devPublic : prodDist;
   return fs.existsSync(p) ? p : undefined;
 }
@@ -48,10 +69,28 @@ function createWindow() {
 app.whenReady().then(async () => {
   app.setName('POS Frères Basiles');
   if (process.platform === 'win32') {
-    app.setAppUserModelId('com.freresbasiles.pos.desktop');
+    const edition = getAppEdition();
+    app.setAppUserModelId(
+      edition === 'server'
+        ? 'com.freresbasiles.pos.desktop.server'
+        : edition === 'remote'
+          ? 'com.freresbasiles.pos.desktop.remote'
+          : 'com.freresbasiles.pos.desktop',
+    );
   }
 
   await localDb.initLocalDb(app.getPath('userData'));
+
+  if (getAppEdition() === 'server' && !isDev) {
+    const stack = await ensureServerStack();
+    if (!stack.ok) {
+      await dialog.showMessageBox({
+        type: 'error',
+        title: 'Serveur local',
+        message: stack.message || 'Impossible de démarrer le serveur local.',
+      });
+    }
+  }
 
   ipcMain.handle('localdb:outboxEnqueue', (_e, payload) => localDb.outboxEnqueue(payload));
   ipcMain.handle('localdb:outboxList', () => localDb.outboxList());
@@ -70,7 +109,13 @@ app.whenReady().then(async () => {
     return win.webContents.getPrintersAsync();
   });
 
+  ipcMain.handle('app:get-edition', () => getAppEdition());
+
   createWindow();
+
+  if (!isDev && getAppEdition() === 'remote') {
+    initUpdater();
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
