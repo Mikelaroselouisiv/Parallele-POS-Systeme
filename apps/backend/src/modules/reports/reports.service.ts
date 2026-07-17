@@ -51,6 +51,7 @@ export class ReportsService {
   async salesByCashier() {
     const grouped = await this.prisma.sale.groupBy({
       by: ['userId'],
+      where: { deletedAt: null },
       _sum: { total: true },
       _count: { id: true },
       orderBy: { _sum: { total: 'desc' } },
@@ -85,7 +86,7 @@ export class ReportsService {
 
   private async sumByDate(fromDate: Date) {
     const res = await this.prisma.sale.aggregate({
-      where: { createdAt: { gte: fromDate }, status: 'COMPLETED' },
+      where: { createdAt: { gte: fromDate }, status: 'COMPLETED', deletedAt: null },
       _sum: { total: true },
     });
     return Number(res._sum.total ?? 0);
@@ -98,7 +99,7 @@ export class ReportsService {
         SELECT COALESCE(SUM(si."subtotal"), 0) AS "total"
         FROM "SaleItem" si
         JOIN "Sale" s ON s.id = si."saleId"
-        WHERE s."status" = 'COMPLETED'
+        WHERE s."status" = 'COMPLETED' AND s."deletedAt" IS NULL
           AND s."createdAt" >= ${fromDate}
           AND s."createdAt" < ${toDate};
       `;
@@ -111,7 +112,7 @@ export class ReportsService {
         FROM "SaleItem" si
         JOIN "Sale" s ON s.id = si."saleId"
         JOIN "Product" p ON p.id = si."productId"
-        WHERE s."status" = 'COMPLETED'
+        WHERE s."status" = 'COMPLETED' AND s."deletedAt" IS NULL
           AND p."companyId" = ${ids[0]}
           AND s."createdAt" >= ${fromDate}
           AND s."createdAt" < ${toDate};
@@ -124,7 +125,7 @@ export class ReportsService {
       FROM "SaleItem" si
       JOIN "Sale" s ON s.id = si."saleId"
       JOIN "Product" p ON p.id = si."productId"
-      WHERE s."status" = 'COMPLETED'
+      WHERE s."status" = 'COMPLETED' AND s."deletedAt" IS NULL
         AND p."companyId" IN (${Prisma.join(ids)})
         AND s."createdAt" >= ${fromDate}
         AND s."createdAt" < ${toDate};
@@ -379,7 +380,7 @@ export class ReportsService {
         FROM "SaleItem" si
         JOIN "Sale" s ON s.id = si."saleId"
         JOIN "Product" p ON p.id = si."productId"
-        WHERE s."status" = 'COMPLETED'
+        WHERE s."status" = 'COMPLETED' AND s."deletedAt" IS NULL
           AND s."createdAt" >= ${from}
           AND s."createdAt" <= ${to}
           ${deptFilter}
@@ -393,7 +394,7 @@ export class ReportsService {
         FROM "SaleItem" si
         JOIN "Sale" s ON s.id = si."saleId"
         JOIN "Product" p ON p.id = si."productId"
-        WHERE s."status" = 'COMPLETED'
+        WHERE s."status" = 'COMPLETED' AND s."deletedAt" IS NULL
           AND p."companyId" = ${ids[0]}
           AND s."createdAt" >= ${from}
           AND s."createdAt" <= ${to}
@@ -407,7 +408,7 @@ export class ReportsService {
       FROM "SaleItem" si
       JOIN "Sale" s ON s.id = si."saleId"
       JOIN "Product" p ON p.id = si."productId"
-      WHERE s."status" = 'COMPLETED'
+      WHERE s."status" = 'COMPLETED' AND s."deletedAt" IS NULL
         AND p."companyId" IN (${Prisma.join(ids)})
         AND s."createdAt" >= ${from}
         AND s."createdAt" <= ${to}
@@ -635,7 +636,7 @@ export class ReportsService {
         INNER JOIN "Product" p ON p.id = si."productId"
         LEFT JOIN "Department" d ON d.id = p."departmentId"
         LEFT JOIN "Company" c ON c.id = p."companyId"
-        WHERE s."status" = 'COMPLETED'
+        WHERE s."status" = 'COMPLETED' AND s."deletedAt" IS NULL
           AND s."createdAt" >= ${from}
           AND s."createdAt" <= ${to}
           ${deptFilter}
@@ -659,7 +660,7 @@ export class ReportsService {
         INNER JOIN "Product" p ON p.id = si."productId"
         LEFT JOIN "Department" d ON d.id = p."departmentId"
         LEFT JOIN "Company" c ON c.id = p."companyId"
-        WHERE s."status" = 'COMPLETED'
+        WHERE s."status" = 'COMPLETED' AND s."deletedAt" IS NULL
           AND p."companyId" = ${ids[0]}
           AND s."createdAt" >= ${from}
           AND s."createdAt" <= ${to}
@@ -684,7 +685,7 @@ export class ReportsService {
         INNER JOIN "Product" p ON p.id = si."productId"
         LEFT JOIN "Department" d ON d.id = p."departmentId"
         LEFT JOIN "Company" c ON c.id = p."companyId"
-        WHERE s."status" = 'COMPLETED'
+        WHERE s."status" = 'COMPLETED' AND s."deletedAt" IS NULL
           AND p."companyId" IN (${Prisma.join(ids)})
           AND s."createdAt" >= ${from}
           AND s."createdAt" <= ${to}

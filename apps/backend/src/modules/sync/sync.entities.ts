@@ -36,11 +36,8 @@ export function isSyncEntity(name: string): name is SyncEntityName {
 
 /** Append-only : insert si uuid inconnu, jamais écraser. */
 export const APPEND_ONLY_ENTITIES = new Set<SyncEntityName>([
-  'Sale',
-  'SaleItem',
-  'Payment',
+  // Sale / SaleItem / Payment / FinanceEntry : LWW pour propager deletedAt (tombstones).
   'StockMovement',
-  'FinanceEntry',
   'AuditLog',
   'CashClosure',
 ]);

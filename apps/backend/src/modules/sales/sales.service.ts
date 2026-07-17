@@ -259,8 +259,8 @@ export class SalesService {
   }
 
   async cancelSale(id: number, userId?: number) {
-    const sale = await this.prisma.sale.findUnique({
-      where: { id },
+    const sale = await this.prisma.sale.findFirst({
+      where: { id, deletedAt: null },
       include: { items: true },
     });
     if (!sale) {
@@ -287,8 +287,8 @@ export class SalesService {
   }
 
   async refundSale(id: number, userId?: number) {
-    const sale = await this.prisma.sale.findUnique({
-      where: { id },
+    const sale = await this.prisma.sale.findFirst({
+      where: { id, deletedAt: null },
       include: { items: true },
     });
     if (!sale) {
@@ -315,8 +315,8 @@ export class SalesService {
   }
 
   /**
-   * Suppression définitive (admin uniquement) : rétablit le stock si la vente était encore complétée,
-   * supprime l’écriture de caisse liée, puis la vente (lignes et paiements en cascade).
+   * Suppression admin (tombstone sync) : soft-delete Sale + lignes liées.
+   * Ne plus hard-delete : la sync append-only recréait sinon la vente depuis l’autre nœud.
    */
   async deleteSalePermanently(saleId: number, adminUserId?: number, companyId?: number) {
     const sale = await this.prisma.sale.findUnique({
@@ -326,6 +326,9 @@ export class SalesService {
     if (!sale) {
       throw new NotFoundException('Vente introuvable');
     }
+    if (sale.deletedAt) {
+      return { ok: true, id: saleId, alreadyDeleted: true };
+    }
     if (companyId != null && companyId > 0) {
       const mismatch = sale.items.some((i) => i.product.companyId !== companyId);
       if (mismatch) {
@@ -333,6 +336,7 @@ export class SalesService {
       }
     }
 
+    const now = new Date();
     return this.prisma.$transaction(async (tx) => {
       if (sale.status === 'COMPLETED' && sale.items.length > 0) {
         await this.reverseDeliveredStockForSale(
@@ -342,14 +346,34 @@ export class SalesService {
           'Suppression vente (admin)',
         );
       }
-      await tx.financeEntry.deleteMany({ where: { saleId } });
-      await tx.sale.delete({ where: { id: saleId } });
+
+      await tx.financeEntry.updateMany({
+        where: { saleId, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      await tx.payment.updateMany({
+        where: { saleId, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      await tx.saleItem.updateMany({
+        where: { saleId, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      await tx.delivery.updateMany({
+        where: { saleId, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      await tx.sale.update({
+        where: { id: saleId },
+        data: { deletedAt: now },
+      });
+
       await this.auditService.log({
         userId: adminUserId,
         action: 'SALE_DELETED_PERMANENTLY',
         entity: 'SALE',
         entityId: String(saleId),
-        metadata: { previousStatus: sale.status },
+        metadata: { previousStatus: sale.status, soft: true },
       });
       return { ok: true, id: saleId };
     });
