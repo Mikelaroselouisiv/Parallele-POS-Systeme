@@ -4,6 +4,7 @@ import { AppLayout } from './layout/AppLayout';
 import { ConfigPage } from './pages/ConfigPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DefaultRedirect } from './pages/DefaultRedirect';
+import { DeliveryPage } from './pages/DeliveryPage';
 import { LoginPage } from './pages/LoginPage';
 import { PosPage } from './pages/PosPage';
 import { ProtectedRoute } from './pages/ProtectedRoute';
@@ -28,7 +29,7 @@ export default function App() {
             <Route
               path="dashboard"
               element={
-                <RequireRole roles={['ADMIN']}>
+                <RequireRole roles={['ADMIN', 'MANAGER']}>
                   <DashboardPage />
                 </RequireRole>
               }
@@ -46,6 +47,14 @@ export default function App() {
               element={
                 <RequireRole roles={['ADMIN', 'MANAGER', 'CASHIER']}>
                   <PosPage />
+                </RequireRole>
+              }
+            />
+            <Route
+              path="livraisons"
+              element={
+                <RequireRole roles={['ADMIN', 'MANAGER', 'CASHIER', 'LIVREUR', 'ACCOUNTANT']}>
+                  <DeliveryPage />
                 </RequireRole>
               }
             />

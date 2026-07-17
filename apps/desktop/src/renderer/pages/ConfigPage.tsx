@@ -6,9 +6,11 @@ import {
   createDepartment,
   createPackagingUnit,
   createUser,
+  createRole,
   deleteCompany,
   deleteDepartment,
   deletePackagingUnit,
+  deleteRole,
   deleteUser,
   getCompanies,
   getDepartments,
@@ -16,13 +18,18 @@ import {
   getPrinterSettings,
   getProducts,
   getUsers,
+  listPermissions,
+  listRoles,
   patchPrinterSettings,
   updateCompany,
   updateDepartment,
   updatePackagingUnit,
+  updateRole,
   updateUser,
 } from '../services/api';
 import { buildTicketPreviewText } from '../utils/ticketPreview';
+import { formatRoleLabel } from '../utils/roleLabels';
+import { formatQuantity } from '../utils/formatQuantity';
 import { PasswordField } from '../components/PasswordField';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -35,6 +42,8 @@ import type {
   DepartmentPrinterSettings,
   PackagingUnit,
   Product,
+  AppRoleRow,
+  PermissionDefinition,
   SessionUser,
 } from '../types/api';
 import axios from 'axios';
@@ -61,9 +70,7 @@ function formatApiError(err: unknown, fallback: string): string {
   return fallback;
 }
 
-type Tab = 'company' | 'printer' | 'packaging' | 'users';
-
-const ROLES = ['ADMIN', 'MANAGER', 'CASHIER', 'STOCK_MANAGER', 'ACCOUNTANT'] as const;
+type Tab = 'company' | 'printer' | 'packaging' | 'users' | 'roles';
 
 export function ConfigPage() {
   const { can } = useAuth();
@@ -72,6 +79,7 @@ export function ConfigPage() {
   const [companies, setCompanies] = useState<CompanyListItem[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [users, setUsers] = useState<SessionUser[]>([]);
+  const [appRoles, setAppRoles] = useState<AppRoleRow[]>([]);
   const [msg, setMsg] = useAutoClearMessage();
 
   const [printerCompanyId, setPrinterCompanyId] = useState<number | ''>('');
@@ -81,9 +89,14 @@ export function ConfigPage() {
   const [printersList, setPrintersList] = useState<Array<{ name: string }>>([]);
 
   const load = async () => {
-    const [co, d] = await Promise.all([getCompanies(), getDepartments()]);
+    const [co, d, roles] = await Promise.all([
+      getCompanies(),
+      getDepartments(),
+      listRoles().catch(() => [] as AppRoleRow[]),
+    ]);
     setCompanies(co);
     setDepartments(d);
+    setAppRoles(roles.filter((r) => r.isActive));
     if (isAdmin) {
       setUsers(await getUsers());
     }
@@ -282,7 +295,7 @@ export function ConfigPage() {
             ['company', 'Entreprise'],
             ['printer', 'Imprimante'],
             ['packaging', 'Conditionnement'],
-            ...(isAdmin ? [['users', 'Utilisateurs'] as const] : []),
+            ...(isAdmin ? [['users', 'Utilisateurs'] as const, ['roles', 'Rôles & autorisations'] as const] : []),
           ] as const
         ).map(([id, label]) => (
           <button
@@ -546,9 +559,20 @@ export function ConfigPage() {
           items={users}
           companies={companies}
           departments={departments}
+          appRoles={appRoles}
           onChange={async () => {
             await load();
           }}
+        />
+      )}
+
+      {tab === 'roles' && isAdmin && (
+        <RolesSection
+          appRoles={appRoles}
+          onChange={async () => {
+            await load();
+          }}
+          onMessage={(m, o) => setMsg(m, o)}
         />
       )}
     </div>
@@ -578,7 +602,7 @@ function emptyCompanyFormState(): CompanyFormState {
     phone: '',
     email: '',
     taxId: '',
-    currency: 'XOF',
+    currency: 'HTG',
     vatRatePercent: 0,
   };
 }
@@ -608,7 +632,7 @@ function formStateToPayload(f: CompanyFormState): CompanyCreatePayload {
     phone: f.phone.trim() || undefined,
     email: f.email.trim() || undefined,
     taxId: f.taxId.trim() || undefined,
-    currency: f.currency.trim() || 'XOF',
+    currency: f.currency.trim() || 'HTG',
     vatRatePercent: Number(f.vatRatePercent),
   };
 }
@@ -919,7 +943,11 @@ function CompanyFormModal({
           </label>
           <label>
             Devise
-            <input value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} />
+            <input
+              value={form.currency}
+              onChange={(e) => setForm({ ...form, currency: e.target.value })}
+              placeholder="HTG"
+            />
           </label>
           <label>
             TVA (%)
@@ -1536,7 +1564,7 @@ function CompanyDepartmentsPanel({
                           {deptProducts.map((p) => (
                             <tr key={p.id}>
                               <td>{p.name}</td>
-                              <td>{Number(p.stock).toFixed(3)}</td>
+                              <td>{formatQuantity(Number(p.stock))}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1579,11 +1607,13 @@ function UsersSection({
   items,
   companies,
   departments,
+  appRoles,
   onChange,
 }: {
   items: SessionUser[];
   companies: CompanyListItem[];
   departments: Department[];
+  appRoles: AppRoleRow[];
   onChange: () => Promise<void>;
 }) {
   const [phone, setPhone] = useState('');
@@ -1594,6 +1624,16 @@ function UsersSection({
   const [deptId, setDeptId] = useState<number | ''>('');
   const [msg, setMsg] = useAutoClearMessage();
   const [editUser, setEditUser] = useState<SessionUser | null>(null);
+  const [createFormOpen, setCreateFormOpen] = useState(false);
+
+  function resetCreateForm() {
+    setPhone('');
+    setPassword('');
+    setPasswordConfirm('');
+    setFullName('');
+    setRole('CASHIER');
+    setDeptId('');
+  }
 
   async function add(e: FormEvent) {
     e.preventDefault();
@@ -1617,173 +1657,214 @@ function UsersSection({
         fullName: fullName || undefined,
         departmentId: role === 'ADMIN' ? undefined : Number(deptId),
       });
-      setPhone('');
-      setPassword('');
-      setPasswordConfirm('');
-      setFullName('');
+      resetCreateForm();
+      setCreateFormOpen(false);
+      setMsg('');
       await onChange();
+      window.alert('Utilisateur créé avec succès.');
     } catch (err) {
       setMsg(formatApiError(err, 'Création impossible.'), { persist: true });
     }
   }
 
   return (
-    <div className="card">
-      <h2>Utilisateurs</h2>
-      {msg ? <p className="error-text">{msg}</p> : null}
+    <>
+      <div className="card">
+        <h2>Utilisateurs</h2>
+        {msg && !createFormOpen ? <p className="error-text">{msg}</p> : null}
 
-      <section aria-labelledby="users-list-heading">
-        <h3 id="users-list-heading" className="dept-list-title" style={{ marginTop: 0 }}>
-          Liste ({items.length})
-        </h3>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Téléphone</th>
-                <th>Nom affiché</th>
-                <th>Rôle</th>
-                <th>Département</th>
-                <th>Actif</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((u) => (
-                <tr key={u.id}>
-                  <td>{u.phone}</td>
-                  <td>{(u.fullName || '').trim() || '—'}</td>
-                  <td>{u.role}</td>
-                  <td>{userDepartmentLabel(u.departmentId, departments)}</td>
-                  <td>{u.isActive ? 'oui' : 'non'}</td>
-                  <td>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        onClick={() =>
-                          void updateUser(u.id, { isActive: !u.isActive }).then(() => onChange())
-                        }
-                      >
-                        {u.isActive ? 'Désactiver' : 'Activer'}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => setEditUser(u)}
-                      >
-                        Modifier
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => {
-                          if (!confirm('Supprimer cet utilisateur ?')) return;
-                          void deleteUser(u.id)
-                            .then(() => onChange())
-                            .catch((err) =>
-                              setMsg(formatApiError(err, 'Suppression impossible.'), {
-                                persist: true,
-                              }),
-                            );
-                        }}
-                      >
-                        Supprimer
-                      </button>
-                    </div>
-                  </td>
+        <section aria-labelledby="users-list-heading">
+          <h3 id="users-list-heading" className="dept-list-title" style={{ marginTop: 0 }}>
+            Liste ({items.length})
+          </h3>
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Téléphone</th>
+                  <th>Nom affiché</th>
+                  <th>Rôle</th>
+                  <th>Département</th>
+                  <th>Actif</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {items.length === 0 ? (
-          <p className="info-text" style={{ marginTop: '0.5rem' }}>
-            Aucun utilisateur. Créez un compte ci-dessous.
-          </p>
-        ) : null}
-      </section>
-
-      <section className="dept-form-card" aria-labelledby="users-new-heading" style={{ marginTop: '1.25rem' }}>
-        <h3 id="users-new-heading">Nouvel utilisateur</h3>
-        <form className="form-grid" onSubmit={(e) => void add(e)}>
-          <label>
-            Téléphone
-            <input
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="+225…"
-              required
-            />
-          </label>
-          <PasswordField
-            label="Mot de passe"
-            value={password}
-            onChange={setPassword}
-            autoComplete="new-password"
-            minLength={6}
-            required
-          />
-          <PasswordField
-            label="Confirmer le mot de passe"
-            value={passwordConfirm}
-            onChange={setPasswordConfirm}
-            autoComplete="new-password"
-            minLength={6}
-            required
-          />
-          <label>
-            Nom affiché
-            <input value={fullName} onChange={(e) => setFullName(e.target.value)} />
-          </label>
-          <label>
-            Rôle
-            <select
-              value={role}
-              onChange={(e) => {
-                const r = e.target.value;
-                setRole(r);
-                if (r === 'ADMIN') setDeptId('');
-              }}
-            >
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-          </label>
-          {role === 'ADMIN' ? (
-            <p className="info-text" style={{ margin: 0, alignSelf: 'end' }}>
-              Administrateur global : pas d’entreprise ni de département.
-            </p>
-          ) : (
-            <label>
-              Département d’affectation *
-              <select
-                value={deptId === '' ? '' : String(deptId)}
-                onChange={(e) => setDeptId(e.target.value ? Number(e.target.value) : '')}
-                required
-              >
-                <option value="">— Choisir</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.company ? `${d.company.name} — ${d.name}` : d.name}
-                  </option>
+              </thead>
+              <tbody>
+                {items.map((u) => (
+                  <tr key={u.id}>
+                    <td>{u.phone}</td>
+                    <td>{(u.fullName || '').trim() || '—'}</td>
+                    <td>{formatRoleLabel(u.role, appRoles.find((r) => r.code === u.role)?.label)}</td>
+                    <td>{userDepartmentLabel(u.departmentId, departments)}</td>
+                    <td>{u.isActive ? 'oui' : 'non'}</td>
+                    <td>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() =>
+                            void updateUser(u.id, { isActive: !u.isActive }).then(() => onChange())
+                          }
+                        >
+                          {u.isActive ? 'Désactiver' : 'Activer'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => setEditUser(u)}
+                        >
+                          Modifier
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => {
+                            if (!confirm('Supprimer cet utilisateur ?')) return;
+                            void deleteUser(u.id)
+                              .then(() => onChange())
+                              .catch((err) =>
+                                setMsg(formatApiError(err, 'Suppression impossible.'), {
+                                  persist: true,
+                                }),
+                              );
+                          }}
+                        >
+                          Supprimer
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
                 ))}
-              </select>
-            </label>
-          )}
-          <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-            <button type="submit" className="btn btn-primary">
-              Créer l’utilisateur
-            </button>
+              </tbody>
+            </table>
           </div>
-        </form>
-      </section>
+          {items.length === 0 ? (
+            <p className="info-text" style={{ marginTop: '0.5rem' }}>
+              Aucun utilisateur. Ouvrez « Nouvel utilisateur » pour en créer un.
+            </p>
+          ) : null}
+        </section>
+      </div>
+
+      <div className="card catalog-accordion" style={{ marginTop: '1rem' }}>
+        <button
+          type="button"
+          className="catalog-accordion-trigger"
+          id="users-new-heading"
+          aria-expanded={createFormOpen}
+          aria-controls="users-new-panel"
+          onClick={() => {
+            setCreateFormOpen((open) => {
+              if (open) {
+                setMsg('');
+                resetCreateForm();
+              }
+              return !open;
+            });
+          }}
+        >
+          <span className="catalog-accordion-title">Nouvel utilisateur</span>
+          <span className={`catalog-accordion-chevron${createFormOpen ? ' is-open' : ''}`} aria-hidden />
+        </button>
+        {createFormOpen ? (
+          <div
+            className="catalog-accordion-panel"
+            id="users-new-panel"
+            role="region"
+            aria-labelledby="users-new-heading"
+          >
+            {msg ? <p className="error-text">{msg}</p> : null}
+            <form className="form-grid" onSubmit={(e) => void add(e)}>
+              <label>
+                Téléphone
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="+225…"
+                  required
+                />
+              </label>
+              <PasswordField
+                label="Mot de passe"
+                value={password}
+                onChange={setPassword}
+                autoComplete="new-password"
+                minLength={6}
+                required
+              />
+              <PasswordField
+                label="Confirmer le mot de passe"
+                value={passwordConfirm}
+                onChange={setPasswordConfirm}
+                autoComplete="new-password"
+                minLength={6}
+                required
+              />
+              <label>
+                Nom affiché
+                <input value={fullName} onChange={(e) => setFullName(e.target.value)} />
+              </label>
+              <label>
+                Rôle
+                <select
+                  value={role}
+                  onChange={(e) => {
+                    const r = e.target.value;
+                    setRole(r);
+                    if (r === 'ADMIN') setDeptId('');
+                  }}
+                >
+                  {appRoles.map((r) => (
+                    <option key={r.code} value={r.code}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {role === 'ADMIN' ? (
+                <p className="info-text" style={{ margin: 0, alignSelf: 'end' }}>
+                  Administrateur global : pas d’entreprise ni de département.
+                </p>
+              ) : (
+                <label>
+                  Département d’affectation *
+                  <select
+                    value={deptId === '' ? '' : String(deptId)}
+                    onChange={(e) => setDeptId(e.target.value ? Number(e.target.value) : '')}
+                    required
+                  >
+                    <option value="">— Choisir</option>
+                    {departments.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.company ? `${d.company.name} — ${d.name}` : d.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.5rem' }}>
+                <button type="submit" className="btn btn-primary">
+                  Créer l’utilisateur
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    setCreateFormOpen(false);
+                    setMsg('');
+                    resetCreateForm();
+                  }}
+                >
+                  Annuler
+                </button>
+              </div>
+            </form>
+          </div>
+        ) : null}
+      </div>
 
       {editUser ? (
         <UserEditModal
@@ -1791,6 +1872,7 @@ function UsersSection({
           user={editUser}
           companies={companies}
           departments={departments}
+          appRoles={appRoles}
           onClose={() => setEditUser(null)}
           onSaved={async () => {
             setEditUser(null);
@@ -1799,7 +1881,7 @@ function UsersSection({
           onError={(m) => setMsg(m, { persist: true })}
         />
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -1807,6 +1889,7 @@ function UserEditModal({
   user,
   companies,
   departments,
+  appRoles,
   onClose,
   onSaved,
   onError,
@@ -1814,6 +1897,7 @@ function UserEditModal({
   user: SessionUser;
   companies: CompanyListItem[];
   departments: Department[];
+  appRoles: AppRoleRow[];
   onClose: () => void;
   onSaved: () => Promise<void>;
   onError: (m: string) => void;
@@ -1966,9 +2050,9 @@ function UserEditModal({
                 }
               }}
             >
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
+              {appRoles.map((r) => (
+                <option key={r.code} value={r.code}>
+                  {r.label}
                 </option>
               ))}
             </select>
@@ -2024,6 +2108,298 @@ function UserEditModal({
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function RolesSection({
+  appRoles,
+  onChange,
+  onMessage,
+}: {
+  appRoles: AppRoleRow[];
+  onChange: () => Promise<void>;
+  onMessage: (m: string, options?: AutoClearMessageOptions) => void;
+}) {
+  const [permissions, setPermissions] = useState<PermissionDefinition[]>([]);
+  const [editRole, setEditRole] = useState<AppRoleRow | null>(null);
+  const [editPerms, setEditPerms] = useState<string[]>([]);
+  const [newCode, setNewCode] = useState('');
+  const [newLabel, setNewLabel] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+  const [newPerms, setNewPerms] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [createFormOpen, setCreateFormOpen] = useState(false);
+  const [createMsg, setCreateMsg] = useState('');
+
+  useEffect(() => {
+    void listPermissions().then(setPermissions).catch(() => setPermissions([]));
+  }, []);
+
+  function resetCreateForm() {
+    setNewCode('');
+    setNewLabel('');
+    setNewDesc('');
+    setNewPerms([]);
+  }
+
+  async function saveRole() {
+    if (!editRole) return;
+    setBusy(true);
+    try {
+      await updateRole(editRole.id, { permissions: editPerms });
+      setEditRole(null);
+      await onChange();
+      onMessage('Rôle mis à jour.');
+    } catch (err) {
+      onMessage(formatApiError(err, 'Enregistrement impossible.'), { persist: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addRole(e: FormEvent) {
+    e.preventDefault();
+    setCreateMsg('');
+    if (!newCode.trim() || !newLabel.trim() || newPerms.length === 0) {
+      setCreateMsg('Code, libellé et au moins une autorisation sont requis.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await createRole({
+        code: newCode.trim(),
+        label: newLabel.trim(),
+        description: newDesc.trim() || undefined,
+        permissions: newPerms,
+      });
+      resetCreateForm();
+      setCreateFormOpen(false);
+      setCreateMsg('');
+      await onChange();
+      window.alert('Rôle créé avec succès.');
+    } catch (err) {
+      setCreateMsg(formatApiError(err, 'Création impossible.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeRole(role: AppRoleRow) {
+    if (!confirm(`Supprimer le rôle « ${role.label} » ?`)) return;
+    setBusy(true);
+    try {
+      await deleteRole(role.id);
+      await onChange();
+      onMessage('Rôle supprimé.');
+    } catch (err) {
+      onMessage(formatApiError(err, 'Suppression impossible.'), { persist: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="card">
+        <h2>Rôles et autorisations</h2>
+        <p className="dept-hint">
+          Modifiez les droits sans toucher au code. Les rôles système (Administrateur, Gérant, etc.) ne
+          peuvent pas être supprimés ; vous pouvez ajuster leurs autorisations.
+        </p>
+
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Libellé</th>
+                <th>Code</th>
+                <th>Autorisations</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {appRoles.map((r) => (
+                <tr key={r.id}>
+                  <td>
+                    <strong>{r.label}</strong>
+                    {r.isSystem ? <small> · système</small> : null}
+                  </td>
+                  <td>
+                    <code>{r.code}</code>
+                  </td>
+                  <td>
+                    <small>{r.permissions.includes('*') ? 'Tout' : `${r.permissions.length} droit(s)`}</small>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => {
+                          setEditRole(r);
+                          setEditPerms([...r.permissions]);
+                        }}
+                      >
+                        Modifier
+                      </button>
+                      {!r.isSystem ? (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={busy}
+                          onClick={() => void removeRole(r)}
+                        >
+                          Supprimer
+                        </button>
+                      ) : null}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {appRoles.length === 0 ? (
+          <p className="info-text" style={{ marginTop: '0.5rem' }}>
+            Aucun rôle. Ouvrez « Nouveau rôle personnalisé » pour en créer un.
+          </p>
+        ) : null}
+      </div>
+
+      <div className="card catalog-accordion" style={{ marginTop: '1rem' }}>
+        <button
+          type="button"
+          className="catalog-accordion-trigger"
+          id="roles-new-heading"
+          aria-expanded={createFormOpen}
+          aria-controls="roles-new-panel"
+          onClick={() => {
+            setCreateFormOpen((open) => {
+              if (open) {
+                setCreateMsg('');
+                resetCreateForm();
+              }
+              return !open;
+            });
+          }}
+        >
+          <span className="catalog-accordion-title">Nouveau rôle personnalisé</span>
+          <span className={`catalog-accordion-chevron${createFormOpen ? ' is-open' : ''}`} aria-hidden />
+        </button>
+        {createFormOpen ? (
+          <div
+            className="catalog-accordion-panel"
+            id="roles-new-panel"
+            role="region"
+            aria-labelledby="roles-new-heading"
+          >
+            {createMsg ? <p className="error-text">{createMsg}</p> : null}
+            <form className="form-grid" style={{ maxWidth: '40rem' }} onSubmit={(e) => void addRole(e)}>
+              <label>
+                Code (ex. SUPERVISEUR)
+                <input value={newCode} onChange={(e) => setNewCode(e.target.value)} required />
+              </label>
+              <label>
+                Libellé français
+                <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} required />
+              </label>
+              <label>
+                Description
+                <input value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
+              </label>
+              <PermissionPicker permissions={permissions} selected={newPerms} onChange={setNewPerms} />
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.5rem' }}>
+                <button type="submit" className="btn btn-primary" disabled={busy}>
+                  Créer le rôle
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={busy}
+                  onClick={() => {
+                    setCreateFormOpen(false);
+                    setCreateMsg('');
+                    resetCreateForm();
+                  }}
+                >
+                  Annuler
+                </button>
+              </div>
+            </form>
+          </div>
+        ) : null}
+      </div>
+
+      {editRole ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => setEditRole(null)}>
+          <div className="modal card" role="dialog" onClick={(e) => e.stopPropagation()}>
+            <h2>Autorisations — {editRole.label}</h2>
+            <PermissionPicker permissions={permissions} selected={editPerms} onChange={setEditPerms} />
+            <div className="modal-actions">
+              <button type="button" className="btn btn-ghost" onClick={() => setEditRole(null)}>
+                Annuler
+              </button>
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void saveRole()}>
+                Enregistrer
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function PermissionPicker({
+  permissions,
+  selected,
+  onChange,
+}: {
+  permissions: PermissionDefinition[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const hasStar = selected.includes('*');
+  return (
+    <div className="role-permissions-grid" style={{ gridColumn: '1 / -1' }}>
+      <p className="dept-hint" style={{ margin: '0 0 0.5rem' }}>
+        Cochez les actions autorisées pour ce rôle :
+      </p>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(14rem, 1fr))',
+          gap: '0.35rem 1rem',
+          maxHeight: '280px',
+          overflow: 'auto',
+          padding: '0.5rem',
+          border: '1px solid #e2e8f0',
+          borderRadius: '8px',
+        }}
+      >
+        {permissions.map((p) => (
+          <label key={p.code} style={{ display: 'flex', gap: '0.4rem', alignItems: 'flex-start', fontSize: '0.85rem' }}>
+            <input
+              type="checkbox"
+              checked={hasStar || selected.includes(p.code)}
+              disabled={hasStar && p.code !== '*'}
+              onChange={(e) => {
+                if (p.code === '*') {
+                  onChange(e.target.checked ? ['*'] : []);
+                  return;
+                }
+                onChange(
+                  e.target.checked
+                    ? [...selected.filter((x) => x !== '*'), p.code]
+                    : selected.filter((x) => x !== p.code),
+                );
+              }}
+            />
+            <span>{p.label}</span>
+          </label>
+        ))}
       </div>
     </div>
   );

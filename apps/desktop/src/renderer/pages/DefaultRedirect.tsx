@@ -7,6 +7,8 @@ export function DefaultRedirect() {
   switch (user.role) {
     case 'CASHIER':
       return <Navigate to="/app/pos" replace />;
+    case 'LIVREUR':
+      return <Navigate to="/app/livraisons" replace />;
     case 'STOCK_MANAGER':
       return <Navigate to="/app/stock" replace />;
     case 'ACCOUNTANT':

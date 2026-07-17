@@ -1,10 +1,26 @@
-export type UserRole = 'ADMIN' | 'MANAGER' | 'CASHIER' | 'STOCK_MANAGER' | 'ACCOUNTANT';
+export type UserRole =
+  | 'ADMIN'
+  | 'MANAGER'
+  | 'CASHIER'
+  | 'STOCK_MANAGER'
+  | 'ACCOUNTANT'
+  | 'LIVREUR'
+  | (string & {});
+
+export interface UserAttribution {
+  id: number;
+  fullName?: string | null;
+  phone?: string | null;
+  email?: string | null;
+}
 
 export interface SessionUser {
   id: number;
   phone: string;
   email?: string | null;
   role: UserRole;
+  roleLabel?: string | null;
+  permissions?: string[];
   fullName?: string | null;
   isActive?: boolean;
   companyId?: number | null;
@@ -16,6 +32,21 @@ export interface LoginResponse {
   accessToken: string;
   refreshToken: string;
   user: SessionUser;
+}
+
+export interface PermissionDefinition {
+  code: string;
+  label: string;
+}
+
+export interface AppRoleRow {
+  id: number;
+  code: string;
+  label: string;
+  description: string | null;
+  permissions: string[];
+  isSystem: boolean;
+  isActive: boolean;
 }
 
 export type StockMovementKind = 'IN' | 'OUT' | 'ADJUSTMENT';
@@ -39,23 +70,44 @@ export interface StockMovementRow {
       packagingUnit: { id: number; code: string; label: string };
     }>;
   };
-  createdBy: { id: number; email: string | null } | null;
+  createdBy: UserAttribution | null;
   inventorySession?: { id: number; label: string | null; departmentId: number } | null;
   goodsReceipt?: { id: number; departmentId: number; status: GoodsReceiptStatus } | null;
 }
 
 export type InventorySessionStatus = 'DRAFT' | 'COMPLETED' | 'CANCELLED';
+export type InventorySessionKind = 'OPENING' | 'CLOSING' | 'AD_HOC';
 
 export interface InventorySessionListItem {
   id: number;
   departmentId: number;
+  kind?: InventorySessionKind;
   status: InventorySessionStatus;
   label: string | null;
   note: string | null;
   completedAt: string | null;
   createdAt: string;
   department: { id: number; name: string; company: { id: number; name: string } };
+  createdBy?: UserAttribution | null;
+  completedBy?: UserAttribution | null;
+  cancelledBy?: UserAttribution | null;
   _count: { lines: number };
+}
+
+export interface InventorySessionDetail {
+  id: number;
+  departmentId: number;
+  kind?: InventorySessionKind;
+  status: InventorySessionStatus;
+  label: string | null;
+  note: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  createdBy?: UserAttribution | null;
+  completedBy?: UserAttribution | null;
+  cancelledBy?: UserAttribution | null;
+  department: { id: number; name: string; company: { id: number; name: string } };
+  lines: InventoryLineRow[];
 }
 
 export interface InventoryLineRow {
@@ -67,16 +119,77 @@ export interface InventoryLineRow {
   product: { id: number; name: string; sku?: string | null; stock?: string | number };
 }
 
-export interface InventorySessionDetail {
+export interface InventoryCountSheetRow {
   id: number;
-  departmentId: number;
-  status: InventorySessionStatus;
-  label: string | null;
-  note: string | null;
-  completedAt: string | null;
-  createdAt: string;
+  name: string;
+  sku: string | null;
+  stock: number;
+  unitLabel: string;
+}
+
+export interface InventoryCountSheet {
+  generatedAt: string;
   department: { id: number; name: string; company: { id: number; name: string } };
-  lines: InventoryLineRow[];
+  products: InventoryCountSheetRow[];
+}
+
+export type RegisterSessionStatus = 'OPEN' | 'CLOSED';
+
+export interface RegisterListItem {
+  id: number;
+  code: string;
+  storeId: number;
+  store: { id: number; name: string; companyId: number | null };
+}
+
+export interface RegisterInventoryLinePayload {
+  productId: number;
+  countedQty: number;
+}
+
+export interface RegisterSessionDetail {
+  id: number;
+  registerId: number;
+  departmentId: number;
+  status: RegisterSessionStatus;
+  openedAt: string;
+  closedAt: string | null;
+  openingCashAmount: string | number | null;
+  closingCashExpected: string | number | null;
+  closingCashCounted: string | number | null;
+  cashVariance: string | number | null;
+  register: RegisterListItem;
+  department: { id: number; name: string; company: { id: number; name: string } };
+  openedBy: UserAttribution | null;
+  closedBy: UserAttribution | null;
+  openingInventorySession: InventorySessionDetail;
+  closingInventorySession: InventorySessionDetail | null;
+}
+
+export interface GlobalStockSnapshotItem {
+  id: number;
+  name: string;
+  sku: string | null;
+  stock: number;
+  stockMin: number;
+  company: { id: number; name: string } | null;
+  department: { id: number; name: string } | null;
+  unitLabel: string;
+  lowStock: boolean;
+}
+
+export interface GlobalStockSnapshot {
+  generatedAt: string;
+  items: GlobalStockSnapshotItem[];
+}
+
+export type ReceptionStatus = 'pending' | 'partial' | 'complete';
+
+export interface PurchaseOrderLineProgress {
+  productId: number;
+  quantityOrdered: number;
+  quantityReceived: number;
+  quantityRemaining: number;
 }
 
 export interface PurchaseOrderListItem {
@@ -88,7 +201,35 @@ export interface PurchaseOrderListItem {
   reference: string | null;
   createdAt: string;
   department: { id: number; name: string };
-  _count: { lines: number };
+  createdBy?: UserAttribution | null;
+  receptionStatus?: ReceptionStatus;
+  lineProgress?: PurchaseOrderLineProgress[];
+  _count: { lines: number; goodsReceipts?: number };
+}
+
+export interface PurchaseOrderLineDetail {
+  id: number;
+  productId: number;
+  quantityOrdered: number;
+  quantityReceived: number;
+  quantityRemaining: number;
+  unitPriceEst: number | null;
+  product: { id: number; name: string; sku?: string | null };
+}
+
+export interface PurchaseOrderDetail extends PurchaseOrderListItem {
+  lines: PurchaseOrderLineDetail[];
+  goodsReceipts?: Array<{
+    id: number;
+    receivedAt: string;
+    createdBy?: UserAttribution | null;
+    lines: Array<{
+      productId: number;
+      quantity: string | number;
+      unitCost: string | number;
+      product: { id: number; name: string };
+    }>;
+  }>;
 }
 
 export interface GoodsReceiptListItem {
@@ -99,8 +240,19 @@ export interface GoodsReceiptListItem {
   receivedAt: string;
   createdAt: string;
   department: { id: number; name: string; companyId: number };
+  createdBy?: UserAttribution | null;
   _count: { lines: number };
   purchaseOrder: { id: number; reference: string | null } | null;
+}
+
+export interface AuditLogRow {
+  id: number;
+  action: string;
+  entity: string;
+  entityId: string | null;
+  metadata: unknown;
+  createdAt: string;
+  user: UserAttribution | null;
 }
 
 export interface ProductRecipeDetail {
@@ -153,6 +305,7 @@ export interface Product {
   id: number;
   companyId?: number;
   name: string;
+  cardColor?: string | null;
   sku?: string | null;
   barcode?: string | null;
   description?: string | null;
@@ -226,6 +379,56 @@ export interface Sale {
   payments?: SalePaymentRow[];
 }
 
+export type DeliveryStatus = 'PENDING' | 'PARTIAL' | 'DELIVERED';
+
+export interface DeliveryItem {
+  id: number;
+  saleItemId: number;
+  quantityOrdered: number | string;
+  quantityDelivered: number | string;
+  saleItem?: {
+    id: number;
+    lineLabel?: string | null;
+    quantity?: number | string;
+    unitPrice?: number | string;
+    subtotal?: number | string;
+    product?: { id: number; name: string } | null;
+  } | null;
+}
+
+export interface Delivery {
+  id: number;
+  uuid: string;
+  saleId: number;
+  companyId: number;
+  departmentId?: number | null;
+  status: DeliveryStatus;
+  note?: string | null;
+  deliveredAt?: string | null;
+  createdAt: string;
+  company?: { id: number; name: string } | null;
+  department?: { id: number; name: string } | null;
+  deliveredBy?: {
+    id: number;
+    fullName?: string | null;
+    phone?: string | null;
+  } | null;
+  sale?: {
+    id: number;
+    total: number | string;
+    clientName?: string | null;
+    cashier?: string | null;
+    status: string;
+    createdAt: string;
+    user?: {
+      id: number;
+      fullName?: string | null;
+      phone?: string | null;
+    } | null;
+  } | null;
+  items?: DeliveryItem[];
+}
+
 export interface RevenueReport {
   day: number;
   week: number;
@@ -247,6 +450,8 @@ export interface DashboardBalanceSnapshot {
 }
 
 export interface DashboardSalesByProductRow {
+  companyId?: number | null;
+  companyName?: string | null;
   departmentId: number | null;
   departmentName: string | null;
   productId: number;

@@ -1,9 +1,28 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /** null = toutes les entreprises ; sinon ids uniques. */
+  private normalizeCompanyIds(companyIds?: number[]): number[] | null {
+    if (!companyIds?.length) return null;
+    const ids = [...new Set(companyIds.filter((id) => Number.isFinite(id) && id > 0))];
+    return ids.length ? ids : null;
+  }
+
+  parseCompanyIdsQuery(companyIdsRaw?: string, companyIdRaw?: string): number[] | undefined {
+    const fromList = companyIdsRaw
+      ?.split(',')
+      .map((s) => Number.parseInt(s.trim(), 10))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (fromList?.length) return [...new Set(fromList)];
+    const single = companyIdsRaw ? Number.parseInt(companyIdsRaw, 10) : NaN;
+    if (Number.isFinite(single) && single > 0) return [single];
+    return undefined;
+  }
 
   async revenue() {
     const now = new Date();
@@ -29,13 +48,27 @@ export class ReportsService {
     });
   }
 
-  salesByCashier() {
-    return this.prisma.sale.groupBy({
+  async salesByCashier() {
+    const grouped = await this.prisma.sale.groupBy({
       by: ['userId'],
       _sum: { total: true },
       _count: { id: true },
       orderBy: { _sum: { total: 'desc' } },
     });
+    const userIds = grouped.map((g) => g.userId).filter((id): id is number => id != null);
+    const users = userIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, fullName: true, phone: true },
+        })
+      : [];
+    const userMap = new Map(users.map((u) => [u.id, u]));
+    return grouped.map((g) => ({
+      userId: g.userId,
+      user: g.userId != null ? userMap.get(g.userId) ?? null : null,
+      total: g._sum.total,
+      count: g._count.id,
+    }));
   }
 
   async margin() {
@@ -58,13 +91,28 @@ export class ReportsService {
     return Number(res._sum.total ?? 0);
   }
 
-  private async sumSales(fromDate: Date, toDate: Date, companyId?: number) {
-    if (companyId == null) {
+  private async sumSales(fromDate: Date, toDate: Date, companyIds?: number[]) {
+    const ids = this.normalizeCompanyIds(companyIds);
+    if (ids == null) {
       const res = await this.prisma.$queryRaw<Array<{ total: string }>>`
         SELECT COALESCE(SUM(si."subtotal"), 0) AS "total"
         FROM "SaleItem" si
         JOIN "Sale" s ON s.id = si."saleId"
         WHERE s."status" = 'COMPLETED'
+          AND s."createdAt" >= ${fromDate}
+          AND s."createdAt" < ${toDate};
+      `;
+      return Number(res?.[0]?.total ?? 0);
+    }
+
+    if (ids.length === 1) {
+      const res = await this.prisma.$queryRaw<Array<{ total: string }>>`
+        SELECT COALESCE(SUM(si."subtotal"), 0) AS "total"
+        FROM "SaleItem" si
+        JOIN "Sale" s ON s.id = si."saleId"
+        JOIN "Product" p ON p.id = si."productId"
+        WHERE s."status" = 'COMPLETED'
+          AND p."companyId" = ${ids[0]}
           AND s."createdAt" >= ${fromDate}
           AND s."createdAt" < ${toDate};
       `;
@@ -77,22 +125,37 @@ export class ReportsService {
       JOIN "Sale" s ON s.id = si."saleId"
       JOIN "Product" p ON p.id = si."productId"
       WHERE s."status" = 'COMPLETED'
-        AND p."companyId" = ${companyId}
+        AND p."companyId" IN (${Prisma.join(ids)})
         AND s."createdAt" >= ${fromDate}
         AND s."createdAt" < ${toDate};
     `;
-
     return Number(res?.[0]?.total ?? 0);
   }
 
-  private async sumPurchasesReceived(fromDate: Date, toDate: Date, companyId?: number) {
-    // "Achats reçus" = réceptions postées (GoodsReceiptStatus.POSTED) et leur coût (quantity * unitCost).
-    if (companyId == null) {
+  private async sumPurchasesReceived(fromDate: Date, toDate: Date, companyIds?: number[]) {
+    const ids = this.normalizeCompanyIds(companyIds);
+    if (ids == null) {
       const res = await this.prisma.$queryRaw<Array<{ total: string }>>`
         SELECT COALESCE(SUM(grl."quantity" * grl."unitCost"), 0) AS "total"
         FROM "GoodsReceiptLine" grl
         JOIN "GoodsReceipt" gr ON gr.id = grl."goodsReceiptId"
         WHERE gr."status" = 'POSTED'
+          AND gr."deletedAt" IS NULL
+          AND gr."receivedAt" >= ${fromDate}
+          AND gr."receivedAt" < ${toDate};
+      `;
+      return Number(res?.[0]?.total ?? 0);
+    }
+
+    if (ids.length === 1) {
+      const res = await this.prisma.$queryRaw<Array<{ total: string }>>`
+        SELECT COALESCE(SUM(grl."quantity" * grl."unitCost"), 0) AS "total"
+        FROM "GoodsReceiptLine" grl
+        JOIN "GoodsReceipt" gr ON gr.id = grl."goodsReceiptId"
+        JOIN "Department" d ON d.id = gr."departmentId"
+        WHERE gr."status" = 'POSTED'
+          AND gr."deletedAt" IS NULL
+          AND d."companyId" = ${ids[0]}
           AND gr."receivedAt" >= ${fromDate}
           AND gr."receivedAt" < ${toDate};
       `;
@@ -105,25 +168,43 @@ export class ReportsService {
       JOIN "GoodsReceipt" gr ON gr.id = grl."goodsReceiptId"
       JOIN "Department" d ON d.id = gr."departmentId"
       WHERE gr."status" = 'POSTED'
-        AND d."companyId" = ${companyId}
+        AND gr."deletedAt" IS NULL
+        AND d."companyId" IN (${Prisma.join(ids)})
         AND gr."receivedAt" >= ${fromDate}
         AND gr."receivedAt" < ${toDate};
     `;
     return Number(res?.[0]?.total ?? 0);
   }
 
-  private async sumManualExpenses(fromDate: Date, toDate: Date, companyId?: number) {
-    // "Dépenses manuelles" = FinanceEntry EXPENSE.
-    // Pour scoper par entreprise :
-    // - entries récents : categoryId renseigné -> ExpenseCategory.companyId
-    // - entries legacy : categoryId null -> on infère depuis user.companyId (si possible)
-    if (companyId == null) {
+  private async sumManualExpenses(fromDate: Date, toDate: Date, companyIds?: number[]) {
+    const ids = this.normalizeCompanyIds(companyIds);
+    if (ids == null) {
       const res = await this.prisma.$queryRaw<Array<{ total: string }>>`
         SELECT COALESCE(SUM(fe."amount"), 0) AS "total"
         FROM "FinanceEntry" fe
         WHERE fe."type" = 'EXPENSE'
+          AND fe."deletedAt" IS NULL
           AND fe."createdAt" >= ${fromDate}
           AND fe."createdAt" < ${toDate};
+      `;
+      return Number(res?.[0]?.total ?? 0);
+    }
+
+    if (ids.length === 1) {
+      const res = await this.prisma.$queryRaw<Array<{ total: string }>>`
+        SELECT COALESCE(SUM(fe."amount"), 0) AS "total"
+        FROM "FinanceEntry" fe
+        LEFT JOIN "ExpenseCategory" ec ON ec.id = fe."categoryId"
+        LEFT JOIN "User" u ON u.id = fe."userId"
+        WHERE fe."type" = 'EXPENSE'
+          AND fe."deletedAt" IS NULL
+          AND fe."createdAt" >= ${fromDate}
+          AND fe."createdAt" < ${toDate}
+          AND (
+            (fe."categoryId" IS NOT NULL AND ec."companyId" = ${ids[0]})
+            OR (fe."categoryId" IS NULL AND u."companyId" = ${ids[0]})
+            OR (fe."categoryId" IS NULL AND u."companyId" IS NULL)
+          );
       `;
       return Number(res?.[0]?.total ?? 0);
     }
@@ -134,12 +215,12 @@ export class ReportsService {
       LEFT JOIN "ExpenseCategory" ec ON ec.id = fe."categoryId"
       LEFT JOIN "User" u ON u.id = fe."userId"
       WHERE fe."type" = 'EXPENSE'
+        AND fe."deletedAt" IS NULL
         AND fe."createdAt" >= ${fromDate}
         AND fe."createdAt" < ${toDate}
         AND (
-          (fe."categoryId" IS NOT NULL AND ec."companyId" = ${companyId})
-          OR (fe."categoryId" IS NULL AND u."companyId" = ${companyId})
-          OR (fe."categoryId" IS NULL AND u."companyId" IS NULL)
+          (fe."categoryId" IS NOT NULL AND ec."companyId" IN (${Prisma.join(ids)}))
+          OR (fe."categoryId" IS NULL AND u."companyId" IN (${Prisma.join(ids)}))
         );
     `;
     return Number(res?.[0]?.total ?? 0);
@@ -182,7 +263,7 @@ export class ReportsService {
     };
   }
 
-  async dashboardSummary(companyId?: number) {
+  async dashboardSummary(companyIds?: number[]) {
     const now = new Date();
     const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const weekStart = new Date(dayStart);
@@ -201,42 +282,42 @@ export class ReportsService {
     const [day, week, month] = await Promise.all([
       (async () => {
         const [purchases, manualExpenses, sales] = await Promise.all([
-          this.sumPurchasesReceived(dayStart, now, companyId),
-          this.sumManualExpenses(dayStart, now, companyId),
-          this.sumSales(dayStart, now, companyId),
+          this.sumPurchasesReceived(dayStart, now, companyIds),
+          this.sumManualExpenses(dayStart, now, companyIds),
+          this.sumSales(dayStart, now, companyIds),
         ]);
         const previousBalance = (await Promise.all([
-          this.sumPurchasesReceived(prevDayStart, dayStart, companyId),
-          this.sumManualExpenses(prevDayStart, dayStart, companyId),
-          this.sumSales(prevDayStart, dayStart, companyId),
+          this.sumPurchasesReceived(prevDayStart, dayStart, companyIds),
+          this.sumManualExpenses(prevDayStart, dayStart, companyIds),
+          this.sumSales(prevDayStart, dayStart, companyIds),
         ]).then(([pp, me, s]) => s - pp - me));
 
         return this.periodSnapshot({ purchases, manualExpenses, sales, previousBalance });
       })(),
       (async () => {
         const [purchases, manualExpenses, sales] = await Promise.all([
-          this.sumPurchasesReceived(weekStart, now, companyId),
-          this.sumManualExpenses(weekStart, now, companyId),
-          this.sumSales(weekStart, now, companyId),
+          this.sumPurchasesReceived(weekStart, now, companyIds),
+          this.sumManualExpenses(weekStart, now, companyIds),
+          this.sumSales(weekStart, now, companyIds),
         ]);
         const previousBalance = (await Promise.all([
-          this.sumPurchasesReceived(prevWeekStart, weekStart, companyId),
-          this.sumManualExpenses(prevWeekStart, weekStart, companyId),
-          this.sumSales(prevWeekStart, weekStart, companyId),
+          this.sumPurchasesReceived(prevWeekStart, weekStart, companyIds),
+          this.sumManualExpenses(prevWeekStart, weekStart, companyIds),
+          this.sumSales(prevWeekStart, weekStart, companyIds),
         ]).then(([pp, me, s]) => s - pp - me));
 
         return this.periodSnapshot({ purchases, manualExpenses, sales, previousBalance });
       })(),
       (async () => {
         const [purchases, manualExpenses, sales] = await Promise.all([
-          this.sumPurchasesReceived(monthStart, now, companyId),
-          this.sumManualExpenses(monthStart, now, companyId),
-          this.sumSales(monthStart, now, companyId),
+          this.sumPurchasesReceived(monthStart, now, companyIds),
+          this.sumManualExpenses(monthStart, now, companyIds),
+          this.sumSales(monthStart, now, companyIds),
         ]);
         const previousBalance = (await Promise.all([
-          this.sumPurchasesReceived(prevMonthStart, monthStart, companyId),
-          this.sumManualExpenses(prevMonthStart, monthStart, companyId),
-          this.sumSales(prevMonthStart, monthStart, companyId),
+          this.sumPurchasesReceived(prevMonthStart, monthStart, companyIds),
+          this.sumManualExpenses(prevMonthStart, monthStart, companyIds),
+          this.sumSales(prevMonthStart, monthStart, companyIds),
         ]).then(([pp, me, s]) => s - pp - me));
 
         return this.periodSnapshot({ purchases, manualExpenses, sales, previousBalance });
@@ -251,9 +332,9 @@ export class ReportsService {
    * Achats / ventes peuvent être filtrés par département ; les dépenses manuelles restent au périmètre entreprise.
    */
   async dashboardSummaryRange(
-    companyId: number,
     dateFrom: string,
     dateTo: string,
+    companyIds?: number[],
     departmentId?: number,
   ) {
     const from = this.ymdToDateStart(dateFrom);
@@ -262,9 +343,9 @@ export class ReportsService {
       throw new BadRequestException('dateFrom doit être antérieure ou égale à dateTo');
     }
     const [purchases, manualExpenses, sales] = await Promise.all([
-      this.sumPurchasesForRange(from, to, companyId, departmentId),
-      this.sumManualExpensesForRange(from, to, companyId),
-      this.sumSalesForRange(from, to, companyId, departmentId),
+      this.sumPurchasesForRange(from, to, companyIds, departmentId),
+      this.sumManualExpensesForRange(from, to, companyIds),
+      this.sumSalesForRange(from, to, companyIds, departmentId),
     ]);
     const totalOutflows = purchases + manualExpenses;
     const balance = sales - totalOutflows;
@@ -280,75 +361,163 @@ export class ReportsService {
     };
   }
 
-  private async sumSalesForRange(from: Date, to: Date, companyId: number, departmentId?: number) {
-    if (departmentId != null && departmentId > 0) {
+  private async sumSalesForRange(
+    from: Date,
+    to: Date,
+    companyIds?: number[],
+    departmentId?: number,
+  ) {
+    const ids = this.normalizeCompanyIds(companyIds);
+    const deptFilter =
+      departmentId != null && departmentId > 0
+        ? Prisma.sql`AND p."departmentId" = ${departmentId}`
+        : Prisma.empty;
+
+    if (ids == null) {
       const res = await this.prisma.$queryRaw<Array<{ total: string }>>`
         SELECT COALESCE(SUM(si."subtotal"), 0) AS "total"
         FROM "SaleItem" si
         JOIN "Sale" s ON s.id = si."saleId"
         JOIN "Product" p ON p.id = si."productId"
         WHERE s."status" = 'COMPLETED'
-          AND p."companyId" = ${companyId}
-          AND p."departmentId" = ${departmentId}
           AND s."createdAt" >= ${from}
           AND s."createdAt" <= ${to}
+          ${deptFilter}
       `;
       return Number(res?.[0]?.total ?? 0);
     }
+
+    if (ids.length === 1) {
+      const res = await this.prisma.$queryRaw<Array<{ total: string }>>`
+        SELECT COALESCE(SUM(si."subtotal"), 0) AS "total"
+        FROM "SaleItem" si
+        JOIN "Sale" s ON s.id = si."saleId"
+        JOIN "Product" p ON p.id = si."productId"
+        WHERE s."status" = 'COMPLETED'
+          AND p."companyId" = ${ids[0]}
+          AND s."createdAt" >= ${from}
+          AND s."createdAt" <= ${to}
+          ${deptFilter}
+      `;
+      return Number(res?.[0]?.total ?? 0);
+    }
+
     const res = await this.prisma.$queryRaw<Array<{ total: string }>>`
       SELECT COALESCE(SUM(si."subtotal"), 0) AS "total"
       FROM "SaleItem" si
       JOIN "Sale" s ON s.id = si."saleId"
       JOIN "Product" p ON p.id = si."productId"
       WHERE s."status" = 'COMPLETED'
-        AND p."companyId" = ${companyId}
+        AND p."companyId" IN (${Prisma.join(ids)})
         AND s."createdAt" >= ${from}
         AND s."createdAt" <= ${to}
+        ${deptFilter}
     `;
     return Number(res?.[0]?.total ?? 0);
   }
 
-  private async sumPurchasesForRange(from: Date, to: Date, companyId: number, departmentId?: number) {
-    if (departmentId != null && departmentId > 0) {
+  private async sumPurchasesForRange(
+    from: Date,
+    to: Date,
+    companyIds?: number[],
+    departmentId?: number,
+  ) {
+    const ids = this.normalizeCompanyIds(companyIds);
+    const deptFilter =
+      departmentId != null && departmentId > 0
+        ? Prisma.sql`AND gr."departmentId" = ${departmentId}`
+        : Prisma.empty;
+
+    if (ids == null) {
+      const res = await this.prisma.$queryRaw<Array<{ total: string }>>`
+        SELECT COALESCE(SUM(grl."quantity" * grl."unitCost"), 0) AS "total"
+        FROM "GoodsReceiptLine" grl
+        JOIN "GoodsReceipt" gr ON gr.id = grl."goodsReceiptId"
+        WHERE gr."status" = 'POSTED'
+          AND gr."deletedAt" IS NULL
+          AND gr."receivedAt" >= ${from}
+          AND gr."receivedAt" <= ${to}
+          ${deptFilter}
+      `;
+      return Number(res?.[0]?.total ?? 0);
+    }
+
+    if (ids.length === 1) {
       const res = await this.prisma.$queryRaw<Array<{ total: string }>>`
         SELECT COALESCE(SUM(grl."quantity" * grl."unitCost"), 0) AS "total"
         FROM "GoodsReceiptLine" grl
         JOIN "GoodsReceipt" gr ON gr.id = grl."goodsReceiptId"
         JOIN "Department" d ON d.id = gr."departmentId"
         WHERE gr."status" = 'POSTED'
-          AND d."companyId" = ${companyId}
-          AND gr."departmentId" = ${departmentId}
+          AND gr."deletedAt" IS NULL
+          AND d."companyId" = ${ids[0]}
           AND gr."receivedAt" >= ${from}
           AND gr."receivedAt" <= ${to}
+          ${deptFilter}
       `;
       return Number(res?.[0]?.total ?? 0);
     }
+
     const res = await this.prisma.$queryRaw<Array<{ total: string }>>`
       SELECT COALESCE(SUM(grl."quantity" * grl."unitCost"), 0) AS "total"
       FROM "GoodsReceiptLine" grl
       JOIN "GoodsReceipt" gr ON gr.id = grl."goodsReceiptId"
       JOIN "Department" d ON d.id = gr."departmentId"
       WHERE gr."status" = 'POSTED'
-        AND d."companyId" = ${companyId}
+        AND gr."deletedAt" IS NULL
+        AND d."companyId" IN (${Prisma.join(ids)})
         AND gr."receivedAt" >= ${from}
         AND gr."receivedAt" <= ${to}
+        ${deptFilter}
     `;
     return Number(res?.[0]?.total ?? 0);
   }
 
-  private async sumManualExpensesForRange(from: Date, to: Date, companyId: number) {
+  private async sumManualExpensesForRange(from: Date, to: Date, companyIds?: number[]) {
+    const ids = this.normalizeCompanyIds(companyIds);
+    if (ids == null) {
+      const res = await this.prisma.$queryRaw<Array<{ total: string }>>`
+        SELECT COALESCE(SUM(fe."amount"), 0) AS "total"
+        FROM "FinanceEntry" fe
+        WHERE fe."type" = 'EXPENSE'
+          AND fe."deletedAt" IS NULL
+          AND fe."createdAt" >= ${from}
+          AND fe."createdAt" <= ${to}
+      `;
+      return Number(res?.[0]?.total ?? 0);
+    }
+
+    if (ids.length === 1) {
+      const res = await this.prisma.$queryRaw<Array<{ total: string }>>`
+        SELECT COALESCE(SUM(fe."amount"), 0) AS "total"
+        FROM "FinanceEntry" fe
+        LEFT JOIN "ExpenseCategory" ec ON ec.id = fe."categoryId"
+        LEFT JOIN "User" u ON u.id = fe."userId"
+        WHERE fe."type" = 'EXPENSE'
+          AND fe."deletedAt" IS NULL
+          AND fe."createdAt" >= ${from}
+          AND fe."createdAt" <= ${to}
+          AND (
+            (fe."categoryId" IS NOT NULL AND ec."companyId" = ${ids[0]})
+            OR (fe."categoryId" IS NULL AND u."companyId" = ${ids[0]})
+            OR (fe."categoryId" IS NULL AND u."companyId" IS NULL)
+          );
+      `;
+      return Number(res?.[0]?.total ?? 0);
+    }
+
     const res = await this.prisma.$queryRaw<Array<{ total: string }>>`
       SELECT COALESCE(SUM(fe."amount"), 0) AS "total"
       FROM "FinanceEntry" fe
       LEFT JOIN "ExpenseCategory" ec ON ec.id = fe."categoryId"
       LEFT JOIN "User" u ON u.id = fe."userId"
       WHERE fe."type" = 'EXPENSE'
+        AND fe."deletedAt" IS NULL
         AND fe."createdAt" >= ${from}
         AND fe."createdAt" <= ${to}
         AND (
-          (fe."categoryId" IS NOT NULL AND ec."companyId" = ${companyId})
-          OR (fe."categoryId" IS NULL AND u."companyId" = ${companyId})
-          OR (fe."categoryId" IS NULL AND u."companyId" IS NULL)
+          (fe."categoryId" IS NOT NULL AND ec."companyId" IN (${Prisma.join(ids)}))
+          OR (fe."categoryId" IS NULL AND u."companyId" IN (${Prisma.join(ids)}))
         );
     `;
     return Number(res?.[0]?.total ?? 0);
@@ -411,7 +580,7 @@ export class ReportsService {
    * tri par département puis par nom de produit (produits sans département en dernier).
    */
   async dashboardSalesByProduct(
-    companyId: number,
+    companyIds: number[] | undefined,
     opts: {
       period?: 'day' | 'week' | 'month';
       dateFrom?: string;
@@ -420,74 +589,114 @@ export class ReportsService {
     },
   ) {
     const { from, to } = this.resolveSalesByProductRange(opts);
-    return this.querySalesByProduct(companyId, from, to, opts.departmentId);
+    return this.querySalesByProduct(from, to, companyIds, opts.departmentId);
   }
 
-  private async querySalesByProduct(companyId: number, from: Date, to: Date, departmentId?: number) {
-    const rows =
+  private async querySalesByProduct(
+    from: Date,
+    to: Date,
+    companyIds?: number[],
+    departmentId?: number,
+  ) {
+    const ids = this.normalizeCompanyIds(companyIds);
+    const deptFilter =
       departmentId != null && departmentId > 0
-        ? await this.prisma.$queryRaw<
-          Array<{
-            departmentId: number | null;
-            departmentName: string | null;
-            productId: number;
-            productName: string;
-            isService: boolean;
-            quantity: string;
-            totalSubtotal: string;
-          }>
-        >`
-      SELECT
-        p."departmentId" AS "departmentId",
-        d."name" AS "departmentName",
-        p."id" AS "productId",
-        p."name" AS "productName",
-        p."isService" AS "isService",
-        COALESCE(SUM(si."baseQuantity"), 0)::text AS "quantity",
-        COALESCE(SUM(si."subtotal"), 0)::text AS "totalSubtotal"
-      FROM "SaleItem" si
-      INNER JOIN "Sale" s ON s.id = si."saleId"
-      INNER JOIN "Product" p ON p.id = si."productId"
-      LEFT JOIN "Department" d ON d.id = p."departmentId"
-      WHERE s."status" = 'COMPLETED'
-        AND p."companyId" = ${companyId}
-        AND p."departmentId" = ${departmentId}
-        AND s."createdAt" >= ${from}
-        AND s."createdAt" <= ${to}
-      GROUP BY p."id", p."name", p."isService", p."departmentId", d."name"
-      ORDER BY d."name" NULLS LAST, p."name" ASC
-    `
-        : await this.prisma.$queryRaw<
-          Array<{
-            departmentId: number | null;
-            departmentName: string | null;
-            productId: number;
-            productName: string;
-            isService: boolean;
-            quantity: string;
-            totalSubtotal: string;
-          }>
-        >`
-      SELECT
-        p."departmentId" AS "departmentId",
-        d."name" AS "departmentName",
-        p."id" AS "productId",
-        p."name" AS "productName",
-        p."isService" AS "isService",
-        COALESCE(SUM(si."baseQuantity"), 0)::text AS "quantity",
-        COALESCE(SUM(si."subtotal"), 0)::text AS "totalSubtotal"
-      FROM "SaleItem" si
-      INNER JOIN "Sale" s ON s.id = si."saleId"
-      INNER JOIN "Product" p ON p.id = si."productId"
-      LEFT JOIN "Department" d ON d.id = p."departmentId"
-      WHERE s."status" = 'COMPLETED'
-        AND p."companyId" = ${companyId}
-        AND s."createdAt" >= ${from}
-        AND s."createdAt" <= ${to}
-      GROUP BY p."id", p."name", p."isService", p."departmentId", d."name"
-      ORDER BY d."name" NULLS LAST, p."name" ASC
-    `;
+        ? Prisma.sql`AND p."departmentId" = ${departmentId}`
+        : Prisma.empty;
+
+    type Row = {
+      companyId: number | null;
+      companyName: string | null;
+      departmentId: number | null;
+      departmentName: string | null;
+      productId: number;
+      productName: string;
+      isService: boolean;
+      quantity: string;
+      totalSubtotal: string;
+    };
+
+    let rows: Row[];
+
+    if (ids == null) {
+      rows = await this.prisma.$queryRaw<Row[]>`
+        SELECT
+          p."companyId" AS "companyId",
+          c."name" AS "companyName",
+          p."departmentId" AS "departmentId",
+          d."name" AS "departmentName",
+          p."id" AS "productId",
+          p."name" AS "productName",
+          p."isService" AS "isService",
+          COALESCE(SUM(si."baseQuantity"), 0)::text AS "quantity",
+          COALESCE(SUM(si."subtotal"), 0)::text AS "totalSubtotal"
+        FROM "SaleItem" si
+        INNER JOIN "Sale" s ON s.id = si."saleId"
+        INNER JOIN "Product" p ON p.id = si."productId"
+        LEFT JOIN "Department" d ON d.id = p."departmentId"
+        LEFT JOIN "Company" c ON c.id = p."companyId"
+        WHERE s."status" = 'COMPLETED'
+          AND s."createdAt" >= ${from}
+          AND s."createdAt" <= ${to}
+          ${deptFilter}
+        GROUP BY p."id", p."name", p."isService", p."companyId", c."name", p."departmentId", d."name"
+        ORDER BY c."name" NULLS LAST, d."name" NULLS LAST, p."name" ASC
+      `;
+    } else if (ids.length === 1) {
+      rows = await this.prisma.$queryRaw<Row[]>`
+        SELECT
+          p."companyId" AS "companyId",
+          c."name" AS "companyName",
+          p."departmentId" AS "departmentId",
+          d."name" AS "departmentName",
+          p."id" AS "productId",
+          p."name" AS "productName",
+          p."isService" AS "isService",
+          COALESCE(SUM(si."baseQuantity"), 0)::text AS "quantity",
+          COALESCE(SUM(si."subtotal"), 0)::text AS "totalSubtotal"
+        FROM "SaleItem" si
+        INNER JOIN "Sale" s ON s.id = si."saleId"
+        INNER JOIN "Product" p ON p.id = si."productId"
+        LEFT JOIN "Department" d ON d.id = p."departmentId"
+        LEFT JOIN "Company" c ON c.id = p."companyId"
+        WHERE s."status" = 'COMPLETED'
+          AND p."companyId" = ${ids[0]}
+          AND s."createdAt" >= ${from}
+          AND s."createdAt" <= ${to}
+          ${deptFilter}
+        GROUP BY p."id", p."name", p."isService", p."companyId", c."name", p."departmentId", d."name"
+        ORDER BY d."name" NULLS LAST, p."name" ASC
+      `;
+    } else {
+      rows = await this.prisma.$queryRaw<Row[]>`
+        SELECT
+          p."companyId" AS "companyId",
+          c."name" AS "companyName",
+          p."departmentId" AS "departmentId",
+          d."name" AS "departmentName",
+          p."id" AS "productId",
+          p."name" AS "productName",
+          p."isService" AS "isService",
+          COALESCE(SUM(si."baseQuantity"), 0)::text AS "quantity",
+          COALESCE(SUM(si."subtotal"), 0)::text AS "totalSubtotal"
+        FROM "SaleItem" si
+        INNER JOIN "Sale" s ON s.id = si."saleId"
+        INNER JOIN "Product" p ON p.id = si."productId"
+        LEFT JOIN "Department" d ON d.id = p."departmentId"
+        LEFT JOIN "Company" c ON c.id = p."companyId"
+        WHERE s."status" = 'COMPLETED'
+          AND p."companyId" IN (${Prisma.join(ids)})
+          AND s."createdAt" >= ${from}
+          AND s."createdAt" <= ${to}
+          ${deptFilter}
+        GROUP BY p."id", p."name", p."isService", p."companyId", c."name", p."departmentId", d."name"
+        ORDER BY c."name" NULLS LAST, d."name" NULLS LAST, p."name" ASC
+      `;
+    }
+
     return rows.map((r) => ({
+      companyId: r.companyId,
+      companyName: r.companyName,
       departmentId: r.departmentId,
       departmentName: r.departmentName,
       productId: r.productId,
@@ -510,7 +719,7 @@ export class ReportsService {
     const { from, to } = this.resolveSalesByProductRange(opts);
     const [company, rows] = await Promise.all([
       this.prisma.company.findUnique({ where: { id: companyId }, select: { name: true } }),
-      this.querySalesByProduct(companyId, from, to, opts.departmentId),
+      this.querySalesByProduct(from, to, [companyId], opts.departmentId),
     ]);
     if (!company) {
       throw new BadRequestException('Entreprise introuvable');
@@ -582,9 +791,9 @@ export class ReportsService {
    * PDF de synthèse financière (CA, sorties, résultat, top produits) pour une plage calendaire.
    */
   async buildFinancialSynthesisPdf(
-    companyId: number,
     dateFrom: string,
     dateTo: string,
+    companyIds?: number[],
     departmentId?: number,
   ): Promise<Buffer> {
     const from = this.ymdToDateStart(dateFrom);
@@ -593,10 +802,17 @@ export class ReportsService {
       throw new BadRequestException('dateFrom doit être antérieure ou égale à dateTo');
     }
 
-    const [company, snap, rows, dept] = await Promise.all([
-      this.prisma.company.findUnique({ where: { id: companyId }, select: { name: true } }),
-      this.dashboardSummaryRange(companyId, dateFrom.trim(), dateTo.trim(), departmentId),
-      this.querySalesByProduct(companyId, from, to, departmentId),
+    const ids = this.normalizeCompanyIds(companyIds);
+    const [companies, snap, rows, dept] = await Promise.all([
+      ids == null
+        ? this.prisma.company.findMany({ where: { deletedAt: null }, select: { name: true }, orderBy: { name: 'asc' } })
+        : this.prisma.company.findMany({
+            where: { id: { in: ids }, deletedAt: null },
+            select: { name: true },
+            orderBy: { name: 'asc' },
+          }),
+      this.dashboardSummaryRange(dateFrom.trim(), dateTo.trim(), companyIds, departmentId),
+      this.querySalesByProduct(from, to, companyIds, departmentId),
       departmentId != null && departmentId > 0
         ? this.prisma.department.findUnique({
             where: { id: departmentId },
@@ -605,9 +821,16 @@ export class ReportsService {
         : Promise.resolve(null),
     ]);
 
-    if (!company) {
+    if (ids != null && companies.length === 0) {
       throw new BadRequestException('Entreprise introuvable');
     }
+
+    const companyLine =
+      companies.length === 0
+        ? 'Entreprise : —'
+        : companies.length === 1
+          ? `Entreprise : ${companies[0].name}`
+          : `Entreprises : ${companies.map((c) => c.name).join(', ')}`;
 
     const PDFDocument = require('pdfkit');
     const doc = new PDFDocument({ size: 'A4', margin: 40 });
@@ -622,7 +845,7 @@ export class ReportsService {
 
     doc.fontSize(18).text('Synthèse financière', { align: 'left' });
     doc.moveDown(0.35);
-    doc.fontSize(10).text(`Entreprise : ${company.name}`);
+    doc.fontSize(10).text(companyLine);
     doc.fontSize(10).text(`Période : ${dateFrom.trim()} → ${dateTo.trim()} (inclusif)`);
     doc.fontSize(10).text(deptLine);
     doc.fontSize(10).text(`Généré le : ${new Date().toLocaleString('fr-FR')}`);

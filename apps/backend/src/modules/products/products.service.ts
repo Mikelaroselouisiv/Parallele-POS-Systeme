@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductsRepository } from './products.repository';
@@ -14,6 +15,7 @@ export class ProductsService {
   constructor(
     private readonly productsRepository: ProductsRepository,
     private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
   ) {}
 
   private async resolveCompanyId(explicit?: number) {
@@ -86,7 +88,7 @@ export class ProductsService {
     }
   }
 
-  async create(createProductDto: CreateProductDto) {
+  async create(createProductDto: CreateProductDto, userId?: number) {
     this.validateSaleUnits(createProductDto);
     const companyId = await this.resolveCompanyId(createProductDto.companyId);
     await this.assertDepartmentBelongsToCompany(createProductDto.departmentId ?? null, companyId);
@@ -105,9 +107,11 @@ export class ProductsService {
     return this.prisma.$transaction(async (tx) => {
       const product = await tx.product.create({
         data: {
-          companyId,
-          departmentId: createProductDto.departmentId,
+          company: { connect: { id: companyId } },
+          department: { connect: { id: createProductDto.departmentId } },
           name: createProductDto.name,
+          cardColor: createProductDto.cardColor,
+          ...(userId != null ? { createdBy: { connect: { id: userId } } } : {}),
           sku: createProductDto.sku,
           barcode: createProductDto.barcode,
           description: createProductDto.description,
@@ -144,7 +148,7 @@ export class ProductsService {
         });
       }
 
-      return tx.product.findUniqueOrThrow({
+      const result = await tx.product.findUniqueOrThrow({
         where: { id: product.id },
         include: {
           department: true,
@@ -157,6 +161,14 @@ export class ProductsService {
           company: { select: { id: true, name: true, currency: true } },
         },
       });
+      await this.auditService.log({
+        userId,
+        action: 'PRODUCT_CREATED',
+        entity: 'Product',
+        entityId: String(product.id),
+        metadata: { name: product.name },
+      });
+      return result;
     });
   }
 
@@ -164,7 +176,7 @@ export class ProductsService {
     return this.productsRepository.findAll(departmentId);
   }
 
-  async update(id: number, updateProductDto: UpdateProductDto) {
+  async update(id: number, updateProductDto: UpdateProductDto, userId?: number) {
     const existingProduct = await this.productsRepository.findById(id);
     if (!existingProduct) {
       throw new NotFoundException('Product not found');
@@ -197,6 +209,8 @@ export class ProductsService {
       sku: productFields.sku,
       barcode: productFields.barcode,
       description: productFields.description,
+      cardColor: productFields.cardColor !== undefined ? productFields.cardColor : undefined,
+      ...(userId != null ? { updatedBy: { connect: { id: userId } } } : {}),
       isService: productFields.isService,
       trackStock: productFields.trackStock,
       cost: productFields.cost,
@@ -280,7 +294,7 @@ export class ProductsService {
         }
       }
 
-      return tx.product.findUniqueOrThrow({
+      const result = await tx.product.findUniqueOrThrow({
         where: { id },
         include: {
           department: true,
@@ -293,10 +307,18 @@ export class ProductsService {
           company: { select: { id: true, name: true, currency: true } },
         },
       });
+      await this.auditService.log({
+        userId,
+        action: 'PRODUCT_UPDATED',
+        entity: 'Product',
+        entityId: String(id),
+        metadata: { name: result.name },
+      });
+      return result;
     });
   }
 
-  async remove(id: number) {
+  async remove(id: number, userId?: number) {
     const existing = await this.productsRepository.findById(id);
     if (!existing) {
       throw new NotFoundException('Produit introuvable');
@@ -307,9 +329,20 @@ export class ProductsService {
         'Impossible de supprimer : ce produit figure déjà dans des ventes.',
       );
     }
-    return this.prisma.product.update({
+    const deleted = await this.prisma.product.update({
       where: { id },
-      data: { deletedAt: new Date() },
+      data: {
+        deletedAt: new Date(),
+        ...(userId != null ? { updatedBy: { connect: { id: userId } } } : {}),
+      },
     });
+    await this.auditService.log({
+      userId,
+      action: 'PRODUCT_DELETED',
+      entity: 'Product',
+      entityId: String(id),
+      metadata: { name: existing.name },
+    });
+    return deleted;
   }
 }

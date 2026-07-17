@@ -1,11 +1,21 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsNumber, IsOptional, IsString, Min, ValidateIf } from 'class-validator';
+import { IsEnum, IsInt, IsNumber, IsOptional, IsString, Min, ValidateIf } from 'class-validator';
+
+export enum InventorySessionKindDto {
+  OPENING = 'OPENING',
+  CLOSING = 'CLOSING',
+  AD_HOC = 'AD_HOC',
+}
 
 export class CreateInventorySessionDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
   departmentId: number;
+
+  @IsOptional()
+  @IsEnum(InventorySessionKindDto)
+  kind?: InventorySessionKindDto;
 
   @IsOptional()
   @IsString()

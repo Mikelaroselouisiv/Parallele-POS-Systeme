@@ -1,13 +1,10 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
-import { Prisma, Role, User } from '@prisma/client';
+import { Prisma, User } from '@prisma/client';
 import { normalizePhone } from '../../common/utils/phone';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { RolesService } from '../roles/roles.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersRepository } from './users.repository';
@@ -17,17 +14,20 @@ export class UsersService {
   constructor(
     private readonly usersRepository: UsersRepository,
     private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
+    private readonly rolesService: RolesService,
   ) {}
 
-  async create(createUserDto: CreateUserDto): Promise<Omit<User, 'password'>> {
+  async create(createUserDto: CreateUserDto, actorId?: number): Promise<Omit<User, 'password'>> {
     const phoneNorm = normalizePhone(createUserDto.phone);
     const existingUser = await this.usersRepository.findByPhone(phoneNorm);
     if (existingUser) {
       throw new ConflictException('Ce numéro de téléphone est déjà utilisé');
     }
 
-    const role = createUserDto.role ?? Role.CASHIER;
-    if (role !== Role.ADMIN && createUserDto.departmentId == null) {
+    const role = createUserDto.role ?? 'CASHIER';
+    await this.rolesService.assertRoleExists(role);
+    if (role !== 'ADMIN' && createUserDto.departmentId == null) {
       throw new BadRequestException(
         'Un département est requis pour ce rôle (sauf pour le profil administrateur global).',
       );
@@ -60,6 +60,13 @@ export class UsersService {
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password: _password, ...safeUser } = user;
+    await this.auditService.log({
+      userId: actorId,
+      action: 'USER_CREATED',
+      entity: 'User',
+      entityId: String(user.id),
+      metadata: { phone: user.phone, role: user.role },
+    });
     return safeUser;
   }
 
@@ -79,7 +86,7 @@ export class UsersService {
     return this.usersRepository.findByPhone(normalizePhone(phone));
   }
 
-  async update(id: number, dto: UpdateUserDto) {
+  async update(id: number, dto: UpdateUserDto, actorId?: number) {
     const existing = await this.usersRepository.findById(id);
     if (!existing) {
       throw new NotFoundException('Utilisateur introuvable');
@@ -95,9 +102,12 @@ export class UsersService {
       }
     }
 
-    if (dto.role != null && dto.role !== Role.ADMIN && existing.role === Role.ADMIN) {
+    if (dto.role != null) {
+      await this.rolesService.assertRoleExists(dto.role);
+    }
+    if (dto.role != null && dto.role !== 'ADMIN' && existing.role === 'ADMIN') {
       const otherAdmins = await this.prisma.user.count({
-        where: { role: Role.ADMIN, id: { not: id } },
+        where: { role: 'ADMIN', id: { not: id } },
       });
       if (otherAdmins === 0) {
         throw new BadRequestException('Impossible : dernier administrateur du système');
@@ -107,7 +117,7 @@ export class UsersService {
     const nextRole = dto.role ?? existing.role;
     const nextDeptId =
       dto.departmentId !== undefined ? dto.departmentId : existing.departmentId;
-    if (nextRole !== Role.ADMIN && nextDeptId == null) {
+    if (nextRole !== 'ADMIN' && nextDeptId == null) {
       throw new BadRequestException(
         'Un département est requis pour ce rôle (sauf pour le profil administrateur global).',
       );
@@ -144,7 +154,15 @@ export class UsersService {
       data.email = dto.email.trim() === '' ? null : dto.email.trim();
     }
 
-    return this.usersRepository.update(id, data);
+    const updated = await this.usersRepository.update(id, data);
+    await this.auditService.log({
+      userId: actorId,
+      action: 'USER_UPDATED',
+      entity: 'User',
+      entityId: String(id),
+      metadata: { role: updated.role },
+    });
+    return updated;
   }
 
   async remove(id: number, actingUserId: number) {
@@ -155,14 +173,22 @@ export class UsersService {
     if (!existing) {
       throw new NotFoundException('Utilisateur introuvable');
     }
-    if (existing.role === Role.ADMIN) {
+    if (existing.role === 'ADMIN') {
       const otherAdmins = await this.prisma.user.count({
-        where: { role: Role.ADMIN, id: { not: id } },
+        where: { role: 'ADMIN', id: { not: id } },
       });
       if (otherAdmins === 0) {
         throw new BadRequestException('Impossible : dernier administrateur du système');
       }
     }
-    return this.usersRepository.delete(id);
+    const deleted = await this.usersRepository.delete(id);
+    await this.auditService.log({
+      userId: actingUserId,
+      action: 'USER_DELETED',
+      entity: 'User',
+      entityId: String(id),
+      metadata: { phone: existing.phone },
+    });
+    return deleted;
   }
 }

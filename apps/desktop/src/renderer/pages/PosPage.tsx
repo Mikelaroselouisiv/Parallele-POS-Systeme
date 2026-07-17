@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  closeRegisterSession,
   createSale,
+  ensureDefaultRegister,
+  getActiveRegisterSession,
   getCompany,
   getCompanyById,
   getCompanies,
   getDepartments,
+  getInventoryCountSheet,
   getPrinterSettings,
+  listRegisters,
+  openRegisterSession,
 } from '../services/api';
 import { isLikelyNetworkError } from '../services/api-errors';
 import { enqueueSale, syncSalesQueue } from '../services/offline-queue';
@@ -15,16 +21,34 @@ import type {
   CompanyProfile,
   Department,
   DepartmentPrinterSettings,
+  InventoryCountSheetRow,
   Product,
   ProductSaleUnit,
+  RegisterListItem,
+  RegisterSessionDetail,
 } from '../types/api';
+import { RegisterStockCountForm } from '../components/RegisterStockCountForm';
+import { MoneyField } from '../components/MoneyField';
 import { useAuth } from '../context/AuthContext';
 import { useAutoClearMessage } from '../hooks/useAutoClearMessage';
 import { resolveVolumeUnitPrice } from '../utils/volumeUnitPrice';
+import { formatMoney, resolveCurrencyCode } from '../utils/currency';
+import { formatQuantity } from '../utils/formatQuantity';
 
 /** Quantité décimale dans l’unité choisie (caisse, bouteille…) ; le stock est dans la même unité. */
 const QTY_DECIMALS = 4;
 const MIN_SALE_QTY = 0.0001;
+const DEFAULT_PRODUCT_TILE_COLOR = '#f8fafc';
+
+function textColorForBackground(hex: string): string {
+  const h = hex.replace('#', '');
+  if (h.length !== 6) return '#0f172a';
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.62 ? '#0f172a' : '#ffffff';
+}
 
 type CartLine = {
   productSaleUnitId: number;
@@ -96,6 +120,68 @@ export function PosPage() {
   ]);
   const [activeDraftId, setActiveDraftId] = useState<string>('d1');
   const [status, setStatus] = useAutoClearMessage();
+  const [printTicket, setPrintTicket] = useState(false);
+
+  const [registerSession, setRegisterSession] = useState<RegisterSessionDetail | null>(null);
+  const [registers, setRegisters] = useState<RegisterListItem[]>([]);
+  const [selectedRegisterId, setSelectedRegisterId] = useState<number | ''>('');
+  const [countProducts, setCountProducts] = useState<InventoryCountSheetRow[]>([]);
+  const [registerBusy, setRegisterBusy] = useState(false);
+  const [registerError, setRegisterError] = useState('');
+  const [registerPanel, setRegisterPanel] = useState<'open' | 'close' | null>(null);
+  const [showClosedCaisseAlert, setShowClosedCaisseAlert] = useState(false);
+  const [openingCash, setOpeningCash] = useState('');
+  const [closingCashExpected, setClosingCashExpected] = useState('');
+  const [closingCashCounted, setClosingCashCounted] = useState('');
+
+  const salesEnabled = registerSession != null;
+
+  const currencyCode = resolveCurrencyCode(company?.currency);
+
+  const effectiveDepartmentId = useMemo(() => {
+    if (isCashier) {
+      return typeof user?.departmentId === 'number' ? user.departmentId : undefined;
+    }
+    return selectedDepartmentId === '' ? undefined : selectedDepartmentId;
+  }, [isCashier, user?.departmentId, selectedDepartmentId]);
+
+  const effectiveCompanyId = useMemo(() => {
+    if (isCashier) {
+      return typeof user?.companyId === 'number' ? user.companyId : company?.id;
+    }
+    return selectedCompanyId === '' ? undefined : selectedCompanyId;
+  }, [isCashier, user?.companyId, company?.id, selectedCompanyId]);
+
+  async function loadRegisterContext(deptId?: number, compId?: number) {
+    const session = await getActiveRegisterSession();
+    setRegisterSession(session);
+    let resolvedCompanyId = compId;
+    if (deptId != null) {
+      const sheet = await getInventoryCountSheet(deptId);
+      setCountProducts(sheet.products);
+      resolvedCompanyId = resolvedCompanyId ?? sheet.department.company.id;
+    } else {
+      setCountProducts([]);
+    }
+    if (resolvedCompanyId != null) {
+      let regs = await listRegisters(resolvedCompanyId);
+      if (regs.length === 0) {
+        regs = [await ensureDefaultRegister(resolvedCompanyId)];
+      }
+      setRegisters(regs);
+      setSelectedRegisterId((prev) => {
+        if (typeof prev === 'number' && regs.some((r) => r.id === prev)) return prev;
+        return regs[0]?.id ?? '';
+      });
+    }
+  }
+
+  useEffect(() => {
+    if (!user) return;
+    const deptId = effectiveDepartmentId;
+    const compId = effectiveCompanyId;
+    void loadRegisterContext(deptId, compId).catch(() => undefined);
+  }, [user?.id, effectiveDepartmentId, effectiveCompanyId]);
 
   useEffect(() => {
     if (!user) return;
@@ -292,10 +378,18 @@ export function PosPage() {
   }
 
   function formatQty(q: number) {
-    return String(parseFloat(roundQty(q).toFixed(QTY_DECIMALS)));
+    return formatQuantity(q);
+  }
+
+  function refuseClosedCaisse() {
+    setShowClosedCaisseAlert(true);
   }
 
   function addLine(p: Product) {
+    if (!salesEnabled) {
+      refuseClosedCaisse();
+      return;
+    }
     const su = defaultSaleUnit(p);
     if (!su) {
       setStatus('Produit sans unité de vente — configurez-le dans Stock.', { persist: true });
@@ -383,6 +477,10 @@ export function PosPage() {
 
   async function checkout() {
     if (activeCart.length === 0) return;
+    if (!registerSession) {
+      refuseClosedCaisse();
+      return;
+    }
     const total = cartTotal;
     const clientName = activeDraft.name || null;
     const clientUuid =
@@ -408,7 +506,7 @@ export function PosPage() {
       }
       const sale = (await createSale(payload)) as { id: number };
       setStatus(`Vente #${sale.id} enregistrée`);
-      if (window.desktopApp?.printReceipt) {
+      if (printTicket && window.desktopApp?.printReceipt) {
         await window.desktopApp.printReceipt({
           companyName: company?.name ?? 'Entreprise',
           companyPhone: company?.phone ?? null,
@@ -453,13 +551,182 @@ export function PosPage() {
     }
   }
 
+  async function onOpenRegister(lines: Array<{ productId: number; countedQty: number }>) {
+    if (effectiveDepartmentId == null || selectedRegisterId === '') {
+      setRegisterError('Configuration manquante.');
+      return;
+    }
+    setRegisterBusy(true);
+    setRegisterError('');
+    try {
+      const cashRaw = openingCash.trim().replace(',', '.');
+      const openingCashAmount =
+        cashRaw === '' ? undefined : Number.isFinite(Number(cashRaw)) ? Number(cashRaw) : undefined;
+      const session = await openRegisterSession({
+        registerId: selectedRegisterId,
+        departmentId: effectiveDepartmentId,
+        openingCashAmount,
+        lines,
+      });
+      setRegisterSession(session);
+      setOpeningCash('');
+      setRegisterPanel(null);
+      setStatus('Caisse ouverte');
+    } catch {
+      setRegisterError('Ouverture impossible.');
+    } finally {
+      setRegisterBusy(false);
+    }
+  }
+
+  async function onCloseRegister(lines: Array<{ productId: number; countedQty: number }>) {
+    if (!registerSession) return;
+    const expected = Number(closingCashExpected.replace(',', '.'));
+    const counted = Number(closingCashCounted.replace(',', '.'));
+    if (!Number.isFinite(expected) || expected < 0 || !Number.isFinite(counted) || counted < 0) {
+      setRegisterError('Montants invalides.');
+      return;
+    }
+    setRegisterBusy(true);
+    setRegisterError('');
+    try {
+      await closeRegisterSession(registerSession.id, {
+        closingCashExpected: expected,
+        closingCashCounted: counted,
+        lines,
+      });
+      setRegisterSession(null);
+      setRegisterPanel(null);
+      setClosingCashExpected('');
+      setClosingCashCounted('');
+      await loadRegisterContext(effectiveDepartmentId, effectiveCompanyId);
+      setStatus('Caisse fermée');
+    } catch {
+      setRegisterError('Fermeture impossible.');
+    } finally {
+      setRegisterBusy(false);
+    }
+  }
+
+  async function refreshCountProducts() {
+    if (effectiveDepartmentId == null) return;
+    const sheet = await getInventoryCountSheet(effectiveDepartmentId);
+    setCountProducts(sheet.products);
+  }
+
+  async function openRegisterPanel(mode: 'open' | 'close') {
+    setRegisterError('');
+    await refreshCountProducts();
+    setRegisterPanel(mode);
+  }
+
   return (
     <div className="page-inner pos-page">
-      <header className="page-header">
-        <h1>Caisse</h1>
+      <header className="page-header" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center' }}>
+        <h1 style={{ margin: 0 }}>Caisse</h1>
+        {registerSession ? (
+          <span className="info-text" style={{ margin: 0 }}>
+            {registerSession.register.code} · {registerSession.department.name}
+          </span>
+        ) : null}
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          disabled={effectiveDepartmentId == null}
+          onClick={() =>
+            void openRegisterPanel(registerSession ? 'close' : 'open')
+          }
+        >
+          {registerSession ? 'Fermer caisse' : 'Ouvrir caisse'}
+        </button>
       </header>
 
       {status ? <p className="info-text">{status}</p> : null}
+
+      {registerPanel && effectiveDepartmentId != null ? (
+        <section className="card" style={{ marginBottom: '0.75rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+            <h2 style={{ margin: 0 }}>{registerPanel === 'open' ? 'Ouverture caisse' : 'Fermeture caisse'}</h2>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={registerBusy}
+              onClick={() => setRegisterPanel(null)}
+            >
+              ×
+            </button>
+          </div>
+          {registerPanel === 'open' ? (
+            <>
+              {registers.length > 1 ? (
+                <label style={{ display: 'block', marginTop: '0.75rem' }}>
+                  Comptoir
+                  <select
+                    value={selectedRegisterId}
+                    onChange={(e) =>
+                      setSelectedRegisterId(e.target.value === '' ? '' : Number(e.target.value))
+                    }
+                  >
+                    {registers.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.code}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              <RegisterStockCountForm
+                products={countProducts}
+                submitLabel="Ouvrir"
+                busy={registerBusy}
+                error={registerError}
+                cashFields={
+                  <MoneyField
+                    label="Fond disponible"
+                    currencyCode={currencyCode}
+                    type="text"
+                    inputMode="decimal"
+                    value={openingCash}
+                    disabled={registerBusy}
+                    onChange={(e) => setOpeningCash(e.target.value)}
+                  />
+                }
+                onSubmit={(lines) => void onOpenRegister(lines)}
+              />
+            </>
+          ) : registerSession ? (
+            <RegisterStockCountForm
+              products={countProducts}
+              submitLabel="Fermer"
+              busy={registerBusy}
+              error={registerError}
+              cashFields={
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
+                  <MoneyField
+                    label="Espèces attendues"
+                    currencyCode={currencyCode}
+                    type="text"
+                    inputMode="decimal"
+                    value={closingCashExpected}
+                    disabled={registerBusy}
+                    onChange={(e) => setClosingCashExpected(e.target.value)}
+                  />
+                  <MoneyField
+                    label="Espèces comptées"
+                    currencyCode={currencyCode}
+                    type="text"
+                    inputMode="decimal"
+                    value={closingCashCounted}
+                    disabled={registerBusy}
+                    onChange={(e) => setClosingCashCounted(e.target.value)}
+                  />
+                </div>
+              }
+              onSubmit={(lines) => void onCloseRegister(lines)}
+            />
+          ) : null}
+        </section>
+      ) : null}
 
       <div className="pos-grid">
         <section className="card pos-products">
@@ -517,6 +784,7 @@ export function PosPage() {
               Paiement
               <select
                 value={activeDraft.paymentMethod}
+                disabled={!salesEnabled}
                 onChange={(e) => setActivePaymentMethod(e.target.value as PaymentMethod)}
               >
                 <option value="CASH">Espèces</option>
@@ -529,7 +797,6 @@ export function PosPage() {
           <div className="product-grid">
             {displayedProducts.map((p) => {
               const su = defaultSaleUnit(p);
-              const basePrice = su ? Number(su.salePrice) : NaN;
               const up = su ? Number(su.unitsPerPackage) : 0;
               const maxInUnit = su && p.trackStock && !p.isService ? maxQtyInSaleUnit(p, up) : undefined;
               const disabled =
@@ -538,28 +805,20 @@ export function PosPage() {
                   !p.isService &&
                   maxInUnit !== undefined &&
                   maxInUnit < MIN_SALE_QTY);
-              const unitLbl =
-                su && (su.labelOverride?.trim() || su.packagingUnit.label) + ` (${su.packagingUnit.code})`;
-              const stockHint =
-                su && p.trackStock && !p.isService
-                  ? `${Number(p.stock).toFixed(3)} ${unitLbl} · max vente ${maxInUnit !== undefined ? maxInUnit.toFixed(3) : '—'}`
-                  : su && p.isService
-                    ? 'service'
-                    : su
-                      ? 'sans suivi stock'
-                      : '—';
+              const tileColor = p.cardColor?.trim() || DEFAULT_PRODUCT_TILE_COLOR;
               return (
                 <button
                   key={p.id}
                   type="button"
                   className="product-tile"
                   disabled={disabled}
+                  style={{
+                    backgroundColor: tileColor,
+                    color: textColorForBackground(tileColor),
+                  }}
                   onClick={() => addLine(p)}
                 >
                   <span className="product-tile-name">{p.name}</span>
-                  <span className="product-tile-meta">
-                    {su ? `dès ${Number(basePrice).toFixed(2)} · ${stockHint}` : '—'}
-                  </span>
                 </button>
               );
             })}
@@ -570,7 +829,7 @@ export function PosPage() {
           <div className="pos-drafts">
             <div className="pos-drafts-head">
               <h2>Panier</h2>
-              <button type="button" className="btn btn-secondary btn-sm" onClick={() => createDraft()}>
+              <button type="button" className="btn btn-secondary btn-sm" disabled={!salesEnabled} onClick={() => createDraft()}>
                 + Fiche
               </button>
             </div>
@@ -579,6 +838,7 @@ export function PosPage() {
                 Nom fiche
                 <input
                   value={activeDraft.name}
+                  disabled={!salesEnabled}
                   onChange={(e) => setActiveDraftName(e.target.value)}
                   placeholder="Ex. Client Dupont"
                 />
@@ -624,7 +884,7 @@ export function PosPage() {
                 <div className="cart-line-main">
                   <div className="cart-line-title">{l.label}</div>
                   <div className="cart-line-sub">
-                    {unitP.toFixed(2)} × {formatQty(l.quantity)} = {lineTotal.toFixed(2)}
+                    {formatMoney(unitP)} × {formatQty(l.quantity)} = {formatMoney(lineTotal)}
                   </div>
                 </div>
                 <div className="cart-qty-editor">
@@ -632,6 +892,7 @@ export function PosPage() {
                     <button
                       type="button"
                       className="btn btn-sm btn-secondary"
+                      disabled={!salesEnabled}
                       title="Retirer 1 unité de vente"
                       onClick={() => bumpQty(l.productSaleUnitId, -1)}
                     >
@@ -640,6 +901,7 @@ export function PosPage() {
                     <button
                       type="button"
                       className="btn btn-sm btn-secondary"
+                      disabled={!salesEnabled}
                       title="Retirer un demi (0,5 unité)"
                       onClick={() => bumpQty(l.productSaleUnitId, -0.5)}
                     >
@@ -648,6 +910,7 @@ export function PosPage() {
                     <button
                       type="button"
                       className="btn btn-sm btn-secondary"
+                      disabled={!salesEnabled}
                       title="Ajouter un demi (0,5 unité)"
                       onClick={() => bumpQty(l.productSaleUnitId, 0.5)}
                     >
@@ -656,6 +919,7 @@ export function PosPage() {
                     <button
                       type="button"
                       className="btn btn-sm btn-secondary"
+                      disabled={!salesEnabled}
                       title="Ajouter 1 unité de vente"
                       onClick={() => bumpQty(l.productSaleUnitId, 1)}
                     >
@@ -671,6 +935,7 @@ export function PosPage() {
                       inputMode="decimal"
                       min={MIN_SALE_QTY}
                       step="any"
+                      disabled={!salesEnabled}
                       defaultValue={formatQty(l.quantity)}
                       onBlur={(e) => setLineQty(l.productSaleUnitId, e.target.value)}
                       onKeyDown={(e) => {
@@ -685,8 +950,16 @@ export function PosPage() {
           </ul>
           <div className="cart-total-row">
             <span>Total</span>
-            <strong>{cartTotal.toFixed(2)}</strong>
+            <strong>{formatMoney(cartTotal)}</strong>
           </div>
+          <label className="checkbox-row" style={{ margin: '0.75rem 0' }}>
+            <input
+              type="checkbox"
+              checked={printTicket}
+              onChange={(e) => setPrintTicket(e.target.checked)}
+            />
+            Imprimer le ticket
+          </label>
           <button
             type="button"
             className="btn btn-primary btn-block"
@@ -697,6 +970,45 @@ export function PosPage() {
           </button>
         </aside>
       </div>
+
+      {showClosedCaisseAlert ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => setShowClosedCaisseAlert(false)}
+        >
+          <div
+            className="modal card"
+            role="dialog"
+            aria-modal
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ marginTop: 0 }}>Caisse fermée</h2>
+            <p style={{ margin: '0 0 1rem' }}>
+              La transaction n&apos;a pas été enregistrée. Ouvrez la caisse d&apos;abord.
+            </p>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowClosedCaisseAlert(false)}
+              >
+                OK
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  setShowClosedCaisseAlert(false);
+                  void openRegisterPanel('open');
+                }}
+              >
+                Ouvrir caisse
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

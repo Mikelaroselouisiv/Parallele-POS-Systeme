@@ -22,8 +22,10 @@ import type {
 } from '../types/api';
 import { useAutoClearMessage } from '../hooks/useAutoClearMessage';
 import { useAuth } from '../context/AuthContext';
-import { InventoryPhysicalSection } from '../components/InventoryPhysicalSection';
+import { MoneyField } from '../components/MoneyField';
 import { PurchasingSection } from '../components/PurchasingSection';
+import { formatMoney } from '../utils/currency';
+import { formatQuantity } from '../utils/formatQuantity';
 import {
   stockPackagingLabel,
 } from '../utils/packagingDisplay';
@@ -48,7 +50,7 @@ function formatApiError(err: unknown, fallback: string): string {
   return fallback;
 }
 
-type StockTab = 'catalog' | 'operations' | 'inventory' | 'purchases';
+type StockTab = 'catalog' | 'operations' | 'purchases';
 
 function defaultSaleUnit(p: Product) {
   return p.saleUnits?.find((s) => s.isDefault) ?? p.saleUnits?.[0];
@@ -59,7 +61,57 @@ function defaultUnitPrice(p: Product) {
   return u ? Number(u.salePrice) : null;
 }
 
+function compareProductsByCompanyDept(a: Product, b: Product): number {
+  const ca = (a.company?.name ?? '').localeCompare(b.company?.name ?? '', 'fr', { sensitivity: 'base' });
+  if (ca !== 0) return ca;
+  const da = (a.department?.name ?? '').localeCompare(b.department?.name ?? '', 'fr', { sensitivity: 'base' });
+  if (da !== 0) return da;
+  return a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' });
+}
+
 type TierDraft = { minQty: string; unitPrice: string };
+
+const DEFAULT_PRODUCT_CARD_COLOR = '#e0f2fe';
+const PRODUCT_CARD_COLOR_PRESETS = [
+  '#e0f2fe',
+  '#dcfce7',
+  '#fef9c3',
+  '#fce7f3',
+  '#ede9fe',
+  '#ffedd5',
+  '#f1f5f9',
+];
+
+function ProductCardColorPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (color: string) => void;
+}) {
+  return (
+    <div className="product-card-color-picker">
+      <span className="product-card-color-label">Couleur à la caisse</span>
+      <div className="product-card-color-swatches" role="group" aria-label="Couleurs prédéfinies">
+        {PRODUCT_CARD_COLOR_PRESETS.map((color) => (
+          <button
+            key={color}
+            type="button"
+            className={`product-card-color-swatch${value === color ? ' is-active' : ''}`}
+            style={{ backgroundColor: color }}
+            aria-label={`Couleur ${color}`}
+            aria-pressed={value === color}
+            onClick={() => onChange(color)}
+          />
+        ))}
+      </div>
+      <label className="product-card-color-custom">
+        Personnalisée
+        <input type="color" value={value} onChange={(e) => onChange(e.target.value)} />
+      </label>
+    </div>
+  );
+}
 
 export function StockPage() {
   const { can } = useAuth();
@@ -70,15 +122,19 @@ export function StockPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [departmentId, setDepartmentId] = useState<number | ''>('');
   const [name, setName] = useState('');
+  const [cardColor, setCardColor] = useState(DEFAULT_PRODUCT_CARD_COLOR);
   const [price, setPrice] = useState('');
   const [packId, setPackId] = useState<number | ''>('');
   const [volumeTiers, setVolumeTiers] = useState<TierDraft[]>([]);
   const [msg, setMsg] = useAutoClearMessage();
-  const [tab, setTab] = useState<StockTab>('catalog');
+  const [tab, setTab] = useState<StockTab>('purchases');
   const [opProductId, setOpProductId] = useState<number | ''>('');
   const [opQty, setOpQty] = useState('');
   const [opReason, setOpReason] = useState('');
   const [opKind, setOpKind] = useState<'in' | 'out'>('in');
+  const [opFilterCompanyId, setOpFilterCompanyId] = useState<number | ''>('');
+  const [opFilterDeptId, setOpFilterDeptId] = useState<number | ''>('');
+  const [opFilterDepartments, setOpFilterDepartments] = useState<Department[]>([]);
   const [opMsg, setOpMsg] = useAutoClearMessage();
   const [editProduct, setEditProduct] = useState<Product | null>(null);
   /** Filtres catalogue (liste à droite) — indépendants du formulaire de création */
@@ -90,9 +146,20 @@ export function StockPage() {
   const isAdmin = can(['ADMIN']);
 
   const stockableProducts = useMemo(
-    () => products.filter((p) => p.trackStock && !p.isService),
+    () =>
+      products
+        .filter((p) => p.trackStock && !p.isService)
+        .sort(compareProductsByCompanyDept),
     [products],
   );
+
+  const opFilteredProducts = useMemo(() => {
+    if (opFilterCompanyId === '' || opFilterDeptId === '') return [];
+    return stockableProducts
+      .filter((p) => (p.companyId ?? p.company?.id) === opFilterCompanyId)
+      .filter((p) => p.department?.id === opFilterDeptId)
+      .sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }));
+  }, [stockableProducts, opFilterCompanyId, opFilterDeptId]);
 
   const opSelectedProduct = useMemo(
     () => (opProductId === '' ? null : products.find((x) => x.id === opProductId) ?? null),
@@ -109,13 +176,7 @@ export function StockPage() {
       const did = catalogFilterDeptId;
       list = list.filter((p) => p.department?.id === did);
     }
-    return [...list].sort((a, b) => {
-      const ca = (a.company?.name ?? '').localeCompare(b.company?.name ?? '', 'fr', { sensitivity: 'base' });
-      if (ca !== 0) return ca;
-      const da = (a.department?.name ?? '').localeCompare(b.department?.name ?? '', 'fr', { sensitivity: 'base' });
-      if (da !== 0) return da;
-      return a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' });
-    });
+    return [...list].sort(compareProductsByCompanyDept);
   }, [products, catalogFilterCompanyId, catalogFilterDeptId]);
 
   const load = async () => {
@@ -157,12 +218,35 @@ export function StockPage() {
   }, [catalogFilterCompanyId]);
 
   useEffect(() => {
+    if (opFilterCompanyId === '') {
+      setOpFilterDepartments([]);
+      setOpFilterDeptId('');
+      setOpProductId('');
+      return;
+    }
+    void getDepartments(opFilterCompanyId).then((d) => {
+      setOpFilterDepartments(d);
+      setOpFilterDeptId((prev) => {
+        if (prev === '') return '';
+        return d.some((x) => x.id === prev) ? prev : '';
+      });
+    });
+  }, [opFilterCompanyId]);
+
+  useEffect(() => {
+    if (opProductId === '') return;
+    if (!opFilteredProducts.some((p) => p.id === opProductId)) {
+      setOpProductId('');
+    }
+  }, [opFilteredProducts, opProductId]);
+
+  useEffect(() => {
     void load().catch(() => setMsg('Erreur chargement stock.', { persist: true }));
   }, []);
 
   useEffect(() => {
     // Sécurité UI: évite l'accès au formulaire d'opérations si le rôle n'est pas ADMIN.
-    if (tab === 'operations' && !isAdmin) setTab('catalog');
+    if (tab === 'operations' && !isAdmin) setTab('purchases');
   }, [tab, isAdmin]);
 
   useEffect(() => {
@@ -231,6 +315,7 @@ export function StockPage() {
     try {
       await createProduct({
         name: name.trim(),
+        cardColor,
         companyId: cid,
         departmentId,
         trackStock: true,
@@ -245,6 +330,7 @@ export function StockPage() {
         ],
       });
       setName('');
+      setCardColor(DEFAULT_PRODUCT_CARD_COLOR);
       setPrice('');
       setVolumeTiers([]);
       setMsg('Produit créé (stock initial à 0 — ajustez le stock après réception).');
@@ -291,7 +377,7 @@ export function StockPage() {
         if (!prod) return;
         if (Number(prod.stock) < qty) {
           setOpMsg(
-            `Stock insuffisant (disponible : ${Number(prod.stock).toFixed(3)} ${stockPackagingLabel(prod)}).`,
+            `Stock insuffisant (disponible : ${formatQuantity(Number(prod.stock))} ${stockPackagingLabel(prod)}).`,
             { persist: true },
           );
           return;
@@ -321,11 +407,11 @@ export function StockPage() {
         <button
           type="button"
           role="tab"
-          aria-selected={tab === 'catalog'}
-          className={`tab ${tab === 'catalog' ? 'active' : ''}`}
-          onClick={() => setTab('catalog')}
+          aria-selected={tab === 'purchases'}
+          className={`tab ${tab === 'purchases' ? 'active' : ''}`}
+          onClick={() => setTab('purchases')}
         >
-          Catalogue
+          Achats et réceptions
         </button>
         <button
           type="button"
@@ -339,25 +425,16 @@ export function StockPage() {
             setTab('operations');
           }}
         >
-          Entrées & sorties
+          Harmonisation manuelle
         </button>
         <button
           type="button"
           role="tab"
-          aria-selected={tab === 'inventory'}
-          className={`tab ${tab === 'inventory' ? 'active' : ''}`}
-          onClick={() => setTab('inventory')}
+          aria-selected={tab === 'catalog'}
+          className={`tab ${tab === 'catalog' ? 'active' : ''}`}
+          onClick={() => setTab('catalog')}
         >
-          Inventaire physique
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'purchases'}
-          className={`tab ${tab === 'purchases' ? 'active' : ''}`}
-          onClick={() => setTab('purchases')}
-        >
-          Achats & réceptions
+          Produits
         </button>
       </div>
 
@@ -418,6 +495,7 @@ export function StockPage() {
                   Nom
                   <input value={name} onChange={(e) => setName(e.target.value)} required />
                 </label>
+                <ProductCardColorPicker value={cardColor} onChange={setCardColor} />
                 <label>
                   Conditionnement
                   <select
@@ -431,17 +509,14 @@ export function StockPage() {
                     ))}
                   </select>
                 </label>
-                <label>
-                  Prix unitaire
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    required
-                  />
-                </label>
+                <MoneyField
+                  label="Prix unitaire"
+                  min={0}
+                  step={0.01}
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  required
+                />
                 <div className="volume-tiers-block catalog-volume-tiers">
                   {volumeTiers.map((row, idx) => (
                     <div key={idx} className="volume-tier-row">
@@ -459,20 +534,17 @@ export function StockPage() {
                           }}
                         />
                       </label>
-                      <label>
-                        Prix unitaire
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.01}
-                          value={row.unitPrice}
-                          onChange={(e) => {
-                            const next = [...volumeTiers];
-                            next[idx] = { ...next[idx], unitPrice: e.target.value };
-                            setVolumeTiers(next);
-                          }}
-                        />
-                      </label>
+                      <MoneyField
+                        label="Prix unitaire"
+                        min={0}
+                        step={0.01}
+                        value={row.unitPrice}
+                        onChange={(e) => {
+                          const next = [...volumeTiers];
+                          next[idx] = { ...next[idx], unitPrice: e.target.value };
+                          setVolumeTiers(next);
+                        }}
+                      />
                       <button
                         type="button"
                         className="btn btn-ghost btn-sm"
@@ -503,7 +575,7 @@ export function StockPage() {
 
         <div className="card catalog-list-card">
           <h2>
-            Catalogue ({catalogFilteredSorted.length}
+            Produits ({catalogFilteredSorted.length}
             {catalogFilteredSorted.length !== products.length ? ` / ${products.length}` : ''})
           </h2>
           <div className="form-grid" style={{ marginBottom: '1rem', maxWidth: '36rem' }}>
@@ -550,7 +622,7 @@ export function StockPage() {
                   <th>Conditionnement</th>
                   <th>Produit</th>
                   <th>SKU</th>
-                  <th>Prix défaut</th>
+                  <th>Prix défaut (HTG)</th>
                   <th>Stock</th>
                   <th />
                 </tr>
@@ -581,8 +653,8 @@ export function StockPage() {
                           {p.isService ? <small> (service)</small> : null}
                         </td>
                         <td>{p.sku ?? '—'}</td>
-                        <td>{dp != null ? dp.toFixed(2) : '—'}</td>
-                        <td>{Number(p.stock).toFixed(3)}</td>
+                        <td className="journal-amt">{dp != null ? formatMoney(dp) : '—'}</td>
+                        <td>{formatQuantity(Number(p.stock))}</td>
                         <td className="table-actions catalog-table-actions">
                           <button
                             type="button"
@@ -611,14 +683,6 @@ export function StockPage() {
         </>
       ) : null}
 
-      {tab === 'inventory' ? (
-        <InventoryPhysicalSection
-          visible={tab === 'inventory'}
-          departments={departments}
-          onStockChanged={() => void load()}
-        />
-      ) : null}
-
       {tab === 'purchases' ? (
         <PurchasingSection
           visible={tab === 'purchases'}
@@ -631,11 +695,11 @@ export function StockPage() {
 
       {tab === 'operations' && isAdmin ? (
         <section className="card">
-          <h2>Réapprovisionnement & retraits manuels</h2>
+          <h2>Harmonisation manuelle</h2>
           {opMsg ? (
             <p className={/enregistrée/i.test(opMsg) ? 'info-text' : 'error-text'}>{opMsg}</p>
           ) : null}
-          <form className="form-grid" style={{ maxWidth: '32rem' }} onSubmit={(e) => void onStockOperation(e)}>
+          <form className="form-grid" style={{ maxWidth: '36rem' }} onSubmit={(e) => void onStockOperation(e)}>
             <label>
               Type d’opération
               <select value={opKind} onChange={(e) => setOpKind(e.target.value === 'out' ? 'out' : 'in')}>
@@ -644,16 +708,65 @@ export function StockPage() {
               </select>
             </label>
             <label>
+              Entreprise
+              <select
+                value={opFilterCompanyId === '' ? '' : String(opFilterCompanyId)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setOpFilterCompanyId(v ? Number(v) : '');
+                  setOpFilterDeptId('');
+                  setOpProductId('');
+                }}
+                required
+              >
+                <option value="">— Choisir</option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Département
+              <select
+                value={opFilterDeptId === '' ? '' : String(opFilterDeptId)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setOpFilterDeptId(v ? Number(v) : '');
+                  setOpProductId('');
+                }}
+                disabled={opFilterCompanyId === ''}
+                required
+              >
+                <option value="">
+                  {opFilterCompanyId === '' ? '— Choisir une entreprise d’abord —' : '— Choisir —'}
+                </option>
+                {opFilterDepartments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
               Produit (stock suivi)
               <select
                 value={opProductId === '' ? '' : String(opProductId)}
                 onChange={(e) => setOpProductId(e.target.value ? Number(e.target.value) : '')}
+                disabled={opFilterDeptId === ''}
                 required
               >
-                <option value="">— Choisir</option>
-                {stockableProducts.map((p) => (
+                <option value="">
+                  {opFilterDeptId === ''
+                    ? '— Choisir un département d’abord —'
+                    : opFilteredProducts.length === 0
+                      ? '— Aucun produit dans ce département —'
+                      : '— Choisir —'}
+                </option>
+                {opFilteredProducts.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name} — {stockPackagingLabel(p)} — stock {Number(p.stock).toFixed(3)}
+                    {p.name} — {stockPackagingLabel(p)} — stock {formatQuantity(Number(p.stock))}
                   </option>
                 ))}
               </select>
@@ -692,7 +805,11 @@ export function StockPage() {
             <p className="info-text" style={{ marginTop: '1rem' }}>
               Aucun produit avec stock suivi. Cochez « Suivre le stock » sur un produit ou créez un article physique.
             </p>
-          ) : null}
+          ) : (
+            <p className="dept-hint" style={{ marginTop: '1rem', marginBottom: 0 }}>
+              Choisissez d’abord l’entreprise et le département pour afficher uniquement les produits concernés.
+            </p>
+          )}
         </section>
       ) : null}
 
@@ -730,6 +847,7 @@ function EditProductModal({
   const [companyId, setCompanyId] = useState<number>(initialCompanyId);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [name, setName] = useState(product.name);
+  const [cardColor, setCardColor] = useState(product.cardColor ?? DEFAULT_PRODUCT_CARD_COLOR);
   const [sku, setSku] = useState(product.sku ?? '');
   const [barcode, setBarcode] = useState(product.barcode ?? '');
   const [description, setDescription] = useState(product.description ?? '');
@@ -860,6 +978,7 @@ function EditProductModal({
     try {
       await updateProduct(product.id, {
         name: name.trim(),
+        cardColor,
         companyId,
         sku: sku.trim() || undefined,
         barcode: barcode.trim() || undefined,
@@ -931,6 +1050,7 @@ function EditProductModal({
             Nom *
             <input value={name} onChange={(e) => setName(e.target.value)} required />
           </label>
+          <ProductCardColorPicker value={cardColor} onChange={setCardColor} />
           <label>
             SKU
             <input value={sku} onChange={(e) => setSku(e.target.value)} />
@@ -984,21 +1104,21 @@ function EditProductModal({
               Aucun conditionnement pour ce département. Créez-en dans Configuration → Conditionnement.
             </p>
           ) : null}
-          <label>
-            Coût
-            <input type="number" min={0} step={0.01} value={cost} onChange={(e) => setCost(e.target.value)} />
-          </label>
-          <label>
-            Prix unitaire
-            <input
-              type="number"
-              min={0}
-              step={0.01}
-              value={salePrice}
-              onChange={(e) => setSalePrice(e.target.value)}
-              required
-            />
-          </label>
+          <MoneyField
+            label="Coût"
+            min={0}
+            step={0.01}
+            value={cost}
+            onChange={(e) => setCost(e.target.value)}
+          />
+          <MoneyField
+            label="Prix unitaire"
+            min={0}
+            step={0.01}
+            value={salePrice}
+            onChange={(e) => setSalePrice(e.target.value)}
+            required
+          />
           <div className="volume-tiers-block">
             {priceTiers.map((row, idx) => (
               <div key={idx} className="volume-tier-row">
@@ -1016,20 +1136,17 @@ function EditProductModal({
                     }}
                   />
                 </label>
-                <label>
-                  Prix unitaire rabais
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    value={row.unitPrice}
-                    onChange={(e) => {
-                      const next = [...priceTiers];
-                      next[idx] = { ...next[idx], unitPrice: e.target.value };
-                      setPriceTiers(next);
-                    }}
-                  />
-                </label>
+                <MoneyField
+                  label="Prix unitaire rabais"
+                  min={0}
+                  step={0.01}
+                  value={row.unitPrice}
+                  onChange={(e) => {
+                    const next = [...priceTiers];
+                    next[idx] = { ...next[idx], unitPrice: e.target.value };
+                    setPriceTiers(next);
+                  }}
+                />
                 <button
                   type="button"
                   className="btn btn-ghost btn-sm"

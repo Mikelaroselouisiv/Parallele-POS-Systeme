@@ -1,7 +1,9 @@
 /** Aperçu texte du ticket (même logique que thermal-printer.cjs, sans Electron). */
 
+import { formatMoneyCompact } from './currency';
+
 function formatMoney(value: number) {
-  return Number(value).toFixed(2);
+  return formatMoneyCompact(value);
 }
 
 function clipLine(text: string, lineWidth: number) {

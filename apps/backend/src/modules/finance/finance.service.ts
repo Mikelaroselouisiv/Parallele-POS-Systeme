@@ -1,6 +1,9 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { FinanceType, GoodsReceiptStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { PurchasingService } from '../purchasing/purchasing.service';
+import { SalesService } from '../sales/sales.service';
 import { CloseCashDto, CreateFinanceEntryDto } from './dto/finance-entry.dto';
 
 export type FinanceLedgerNature = 'all' | 'purchase' | 'sale' | 'expense';
@@ -16,7 +19,12 @@ export type FinanceLedgerRow = {
 
 @Injectable()
 export class FinanceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
+    private readonly purchasingService: PurchasingService,
+    private readonly salesService: SalesService,
+  ) {}
 
   private ymdToDateStart(ymd: string): Date {
     const [y, m, d] = ymd.split('-').map((x) => Number.parseInt(x, 10));
@@ -62,8 +70,8 @@ export class FinanceService {
       opts?.companyId != null ? this.companyFinanceWhere(opts.companyId) : undefined;
 
     const where: Prisma.FinanceEntryWhereInput | undefined = companyFilter
-      ? { type: { in: [FinanceType.INCOME, FinanceType.EXPENSE] }, ...companyFilter }
-      : undefined;
+      ? { deletedAt: null, type: { in: [FinanceType.INCOME, FinanceType.EXPENSE] }, ...companyFilter }
+      : { deletedAt: null, type: { in: [FinanceType.INCOME, FinanceType.EXPENSE] } };
 
     const [items, total] = await Promise.all([
       this.prisma.financeEntry.findMany({
@@ -113,6 +121,7 @@ export class FinanceService {
     if (wantPurchase) {
       const receipts = await this.prisma.goodsReceipt.findMany({
         where: {
+          deletedAt: null,
           status: GoodsReceiptStatus.POSTED,
           receivedAt: { gte: from, lte: to },
           department: { companyId },
@@ -142,6 +151,7 @@ export class FinanceService {
       if (wantExpense) types.push(FinanceType.EXPENSE);
       const entries = await this.prisma.financeEntry.findMany({
         where: {
+          deletedAt: null,
           type: { in: types },
           createdAt: { gte: from, lte: to },
           ...this.companyFinanceWhere(companyId),
@@ -207,7 +217,7 @@ export class FinanceService {
 
     const createdAt = dto.entryDate ? this.entryDateFromYmd(dto.entryDate) : undefined;
 
-    return this.prisma.financeEntry.create({
+    const entry = await this.prisma.financeEntry.create({
       data: {
         type: dto.type,
         amount: dto.amount,
@@ -217,11 +227,19 @@ export class FinanceService {
         ...(createdAt != null ? { createdAt } : {}),
       },
     });
+    await this.auditService.log({
+      userId,
+      action: 'FINANCE_ENTRY_CREATED',
+      entity: 'FinanceEntry',
+      entityId: String(entry.id),
+      metadata: { type: dto.type, amount: dto.amount },
+    });
+    return entry;
   }
 
-  closeCash(dto: CloseCashDto, userId?: number) {
+  async closeCash(dto: CloseCashDto, userId?: number) {
     const variance = dto.countedAmount - dto.expectedAmount;
-    return this.prisma.cashClosure.create({
+    const closure = await this.prisma.cashClosure.create({
       data: {
         registerId: dto.registerId,
         expectedAmount: dto.expectedAmount,
@@ -230,5 +248,85 @@ export class FinanceService {
         createdById: userId,
       },
     });
+    await this.auditService.log({
+      userId,
+      action: 'CASH_CLOSURE_CREATED',
+      entity: 'CashClosure',
+      entityId: String(closure.id),
+      metadata: { variance },
+    });
+    return closure;
+  }
+
+  /**
+   * Suppression admin d'une ligne du journal unifié, avec effets métier :
+   * - achat (gr-*) : annulation stock + soft delete réception ;
+   * - vente (fe-* INCOME + saleId) : suppression définitive de la vente ;
+   * - dépense (fe-* EXPENSE) : soft delete de l'écriture.
+   */
+  async deleteLedgerRow(ledgerRowId: string, companyId: number, userId?: number) {
+    const trimmed = ledgerRowId.trim();
+    const match = /^(gr|fe)-(\d+)$/.exec(trimmed);
+    if (!match) {
+      throw new BadRequestException('Identifiant de ligne invalide');
+    }
+    const [, prefix, idStr] = match;
+    const refId = Number.parseInt(idStr, 10);
+    if (!Number.isFinite(refId) || refId <= 0) {
+      throw new BadRequestException('Identifiant de ligne invalide');
+    }
+
+    if (prefix === 'gr') {
+      const gr = await this.prisma.goodsReceipt.findFirst({
+        where: { id: refId, deletedAt: null, status: GoodsReceiptStatus.POSTED },
+        include: { department: { select: { companyId: true } } },
+      });
+      if (!gr || gr.department.companyId !== companyId) {
+        throw new NotFoundException('Réception introuvable pour cette entreprise');
+      }
+      await this.purchasingService.deleteGoodsReceipt(refId, userId);
+      return { ok: true, kind: 'PURCHASE' as const, id: trimmed };
+    }
+
+    const fe = await this.prisma.financeEntry.findFirst({
+      where: {
+        id: refId,
+        deletedAt: null,
+        ...this.companyFinanceWhere(companyId),
+      },
+    });
+    if (!fe) {
+      throw new NotFoundException('Écriture introuvable pour cette entreprise');
+    }
+
+    if (fe.type === FinanceType.INCOME) {
+      let saleId = fe.saleId;
+      if (saleId == null) {
+        const parsed = /#(\d+)\s*$/.exec(fe.description);
+        if (parsed) saleId = Number.parseInt(parsed[1], 10);
+      }
+      if (saleId == null || !Number.isFinite(saleId)) {
+        throw new BadRequestException('Encaissement sans vente liée — suppression impossible.');
+      }
+      await this.salesService.deleteSalePermanently(saleId, userId, companyId);
+      return { ok: true, kind: 'SALE' as const, id: trimmed };
+    }
+
+    if (fe.type === FinanceType.EXPENSE) {
+      await this.prisma.financeEntry.update({
+        where: { id: fe.id },
+        data: { deletedAt: new Date() },
+      });
+      await this.auditService.log({
+        userId,
+        action: 'FINANCE_ENTRY_DELETED',
+        entity: 'FinanceEntry',
+        entityId: String(fe.id),
+        metadata: { type: fe.type, amount: Number(fe.amount), ledgerRowId: trimmed },
+      });
+      return { ok: true, kind: 'EXPENSE' as const, id: trimmed };
+    }
+
+    throw new BadRequestException('Type de ligne non supprimable');
   }
 }

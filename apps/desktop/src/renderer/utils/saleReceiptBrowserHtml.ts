@@ -1,4 +1,5 @@
 import type { Sale } from '../types/api';
+import { formatMoney } from './currency';
 
 function escapeHtml(s: string): string {
   return s
@@ -31,14 +32,14 @@ export function buildSaleDetailPrintHtml(sale: Sale, companyName?: string): stri
       const qty = Number(it.quantity);
       const unit = Number(it.unitPrice);
       const sub = Number(it.subtotal);
-      return `<tr><td>${escapeHtml(label)}</td><td style="text-align:right">${qty}</td><td style="text-align:right">${unit.toFixed(2)}</td><td style="text-align:right">${sub.toFixed(2)}</td></tr>`;
+      return `<tr><td>${escapeHtml(label)}</td><td style="text-align:right">${qty}</td><td style="text-align:right">${formatMoney(unit)}</td><td style="text-align:right">${formatMoney(sub)}</td></tr>`;
     }).join('') ?? '';
 
   const pays =
     sale.payments
       ?.map(
         (p) =>
-          `<tr><td>${paymentMethodLabel(String(p.method))}</td><td style="text-align:right">${Number(p.amount).toFixed(2)}</td><td>${escapeHtml(p.reference ?? '—')}</td></tr>`,
+          `<tr><td>${paymentMethodLabel(String(p.method))}</td><td style="text-align:right">${formatMoney(p.amount)}</td><td>${escapeHtml(p.reference ?? '—')}</td></tr>`,
       )
       .join('') ?? '';
 
@@ -77,7 +78,7 @@ export function buildSaleDetailPrintHtml(sale: Sale, companyName?: string): stri
     <thead><tr><th>Article</th><th style="text-align:right">Qté</th><th style="text-align:right">P.U.</th><th style="text-align:right">Sous-total</th></tr></thead>
     <tbody>${lines}</tbody>
   </table>
-  <div class="total">Total : ${Number(sale.total).toFixed(2)}</div>
+  <div class="total">Total : ${formatMoney(sale.total)}</div>
   ${
     sale.payments?.length
       ? `<h2 style="font-size:1rem;margin:1rem 0 0.35rem">Paiements</h2>

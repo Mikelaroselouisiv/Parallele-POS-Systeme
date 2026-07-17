@@ -36,33 +36,34 @@ export class ReportsController {
 
   @Get('dashboard-summary')
   @Roles('ADMIN', 'MANAGER', 'ACCOUNTANT')
-  dashboardSummary(@Query('companyId') companyIdRaw?: string) {
-    const n = companyIdRaw ? Number.parseInt(companyIdRaw, 10) : undefined;
-    return this.reportsService.dashboardSummary(Number.isFinite(n) && (n as number) > 0 ? n : undefined);
+  dashboardSummary(
+    @Query('companyId') companyIdRaw?: string,
+    @Query('companyIds') companyIdsRaw?: string,
+  ) {
+    const companyIds = this.reportsService.parseCompanyIdsQuery(companyIdsRaw, companyIdRaw);
+    return this.reportsService.dashboardSummary(companyIds);
   }
 
   @Get('dashboard-summary-range')
   @Roles('ADMIN', 'MANAGER', 'ACCOUNTANT')
   dashboardSummaryRange(
-    @Query('companyId') companyIdRaw: string,
     @Query('dateFrom') dateFrom: string,
     @Query('dateTo') dateTo: string,
+    @Query('companyId') companyIdRaw?: string,
+    @Query('companyIds') companyIdsRaw?: string,
     @Query('departmentId') departmentIdRaw?: string,
   ) {
-    const companyId = companyIdRaw ? Number.parseInt(companyIdRaw, 10) : NaN;
-    if (!Number.isFinite(companyId) || companyId <= 0) {
-      throw new BadRequestException('companyId requis et valide');
-    }
     if (!dateFrom?.trim() || !dateTo?.trim()) {
       throw new BadRequestException('dateFrom et dateTo sont requis (YYYY-MM-DD)');
     }
+    const companyIds = this.reportsService.parseCompanyIdsQuery(companyIdsRaw, companyIdRaw);
     const departmentIdN = departmentIdRaw ? Number.parseInt(departmentIdRaw, 10) : NaN;
     const departmentId =
       Number.isFinite(departmentIdN) && (departmentIdN as number) > 0 ? (departmentIdN as number) : undefined;
     return this.reportsService.dashboardSummaryRange(
-      companyId,
       dateFrom.trim(),
       dateTo.trim(),
+      companyIds,
       departmentId,
     );
   }
@@ -104,32 +105,31 @@ export class ReportsController {
   @Roles('ADMIN', 'MANAGER', 'ACCOUNTANT')
   async exportFinancialSynthesisPdf(
     @Res() res: Response,
-    @Query('companyId') companyIdRaw: string,
     @Query('dateFrom') dateFrom: string,
     @Query('dateTo') dateTo: string,
+    @Query('companyId') companyIdRaw?: string,
+    @Query('companyIds') companyIdsRaw?: string,
     @Query('departmentId') departmentIdRaw?: string,
   ) {
-    const companyId = companyIdRaw ? Number.parseInt(companyIdRaw, 10) : NaN;
-    if (!Number.isFinite(companyId) || companyId <= 0) {
-      throw new BadRequestException('companyId requis et valide');
-    }
     if (!dateFrom?.trim() || !dateTo?.trim()) {
       throw new BadRequestException('dateFrom et dateTo sont requis (YYYY-MM-DD)');
     }
+    const companyIds = this.reportsService.parseCompanyIdsQuery(companyIdsRaw, companyIdRaw);
     const departmentIdN = departmentIdRaw ? Number.parseInt(departmentIdRaw, 10) : NaN;
     const departmentId =
       Number.isFinite(departmentIdN) && (departmentIdN as number) > 0 ? (departmentIdN as number) : undefined;
     const buffer = await this.reportsService.buildFinancialSynthesisPdf(
-      companyId,
       dateFrom.trim(),
       dateTo.trim(),
+      companyIds,
       departmentId,
     );
     const filenameDate = new Date().toISOString().slice(0, 10);
+    const scope = companyIds?.length === 1 ? String(companyIds[0]) : companyIds?.length ? 'multi' : 'all';
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="synthese-financiere_${companyId}_${filenameDate}.pdf"`,
+      `attachment; filename="synthese-financiere_${scope}_${filenameDate}.pdf"`,
     );
     res.send(buffer);
   }
@@ -137,29 +137,27 @@ export class ReportsController {
   @Get('dashboard-sales-by-product')
   @Roles('ADMIN', 'MANAGER', 'ACCOUNTANT')
   dashboardSalesByProduct(
-    @Query('companyId') companyIdRaw: string,
     @Query('period') periodRaw?: string,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
+    @Query('companyId') companyIdRaw?: string,
+    @Query('companyIds') companyIdsRaw?: string,
     @Query('departmentId') departmentIdRaw?: string,
   ) {
-    const companyId = companyIdRaw ? Number.parseInt(companyIdRaw, 10) : NaN;
-    if (!Number.isFinite(companyId) || companyId <= 0) {
-      throw new BadRequestException('companyId requis et valide');
-    }
+    const companyIds = this.reportsService.parseCompanyIdsQuery(companyIdsRaw, companyIdRaw);
     const period: 'day' | 'week' | 'month' =
       periodRaw === 'day' || periodRaw === 'week' || periodRaw === 'month' ? periodRaw : 'month';
     const departmentIdN = departmentIdRaw ? Number.parseInt(departmentIdRaw, 10) : NaN;
     const departmentId =
       Number.isFinite(departmentIdN) && (departmentIdN as number) > 0 ? (departmentIdN as number) : undefined;
     if (dateFrom?.trim() && dateTo?.trim()) {
-      return this.reportsService.dashboardSalesByProduct(companyId, {
+      return this.reportsService.dashboardSalesByProduct(companyIds, {
         dateFrom: dateFrom.trim(),
         dateTo: dateTo.trim(),
         ...(departmentId != null ? { departmentId } : {}),
       });
     }
-    return this.reportsService.dashboardSalesByProduct(companyId, {
+    return this.reportsService.dashboardSalesByProduct(companyIds, {
       period,
       ...(departmentId != null ? { departmentId } : {}),
     });

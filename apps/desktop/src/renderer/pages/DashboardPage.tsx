@@ -2,58 +2,55 @@ import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
   createFinanceEntry,
+  deleteFinanceLedgerRow,
+  exportGlobalStockSnapshotPdf,
   getCompanies,
   getCompanyById,
   exportDashboardSalesByProductPdf,
-  getDashboardSummary,
   getDashboardSummaryRange,
   getDashboardSalesByProduct,
   getDepartments,
   getFinanceLedger,
+  getGlobalStockSnapshot,
   getInventoryAlerts,
   getInventoryMovements,
   getPrinterSettings,
+  listAuditLogs,
+  listRegisterSessions,
+  cancelSale,
   deleteSalePermanently,
   getSaleById,
   listSales,
+  refundSale,
 } from '../services/api';
 import type {
   CompanyListItem,
   CompanyProfile,
   DashboardBalanceSnapshot,
   DashboardSalesByProductRow,
-  DashboardSummaryReport,
   Department,
   DepartmentPrinterSettings,
   FinanceLedgerRow,
+  GlobalStockSnapshotItem,
   Product,
+  RegisterSessionDetail,
   Sale,
   StockMovementRow,
+  AuditLogRow,
 } from '../types/api';
+import { formatQuantity } from '../utils/formatQuantity';
+import { formatUserLabel } from '../utils/userAttribution';
 import { useAutoClearMessage } from '../hooks/useAutoClearMessage';
 import { useAuth } from '../context/AuthContext';
 import { DashboardSyntheseTab } from '../components/DashboardSyntheseTab';
+import { RegisterSessionModal } from '../components/RegisterSessionModal';
+import { MoneyField } from '../components/MoneyField';
 import { SaleDetailModal } from '../components/SaleDetailModal';
-import { stockPackagingLabelFromMovementProduct } from '../utils/packagingDisplay';
-
-function movementTypeLabel(t: StockMovementRow['type']): string {
-  switch (t) {
-    case 'IN':
-      return 'Entrée';
-    case 'OUT':
-      return 'Sortie';
-    case 'ADJUSTMENT':
-      return 'Ajustement';
-    default:
-      return t;
-  }
-}
-
-function movementReasonLabel(reason: string | null | undefined): string {
-  if (!reason) return '—';
-  if (reason === 'Sale') return 'Vente';
-  return reason;
-}
+import { VentesDepartmentModal } from '../components/VentesDepartmentModal';
+import { StockLowAlertsPanel } from '../components/StockLowAlertsPanel';
+import { StockMovementsPanel } from '../components/StockMovementsPanel';
+import { formatMoney } from '../utils/currency';
+import { auditActionLabel } from '../utils/auditActionLabel';
 
 function pad2(n: number) {
   return String(n).padStart(2, '0');
@@ -85,19 +82,18 @@ function ymdEndIso(ymd: string): string | undefined {
 
 export function DashboardPage() {
   type TabId = 'synthese' | 'ventes' | 'achats' | 'stock';
-  type PeriodId = 'day' | 'week' | 'month';
 
-  const { can } = useAuth();
+  const { can, canPerm } = useAuth();
   const isAdmin = can(['ADMIN']);
+  const isManager = can(['MANAGER']);
+  const canAccessDashboard = isAdmin || isManager;
+  const canCancelOrRefund = isAdmin || canPerm('sales.cancel');
 
-  const [tab, setTab] = useState<TabId>('ventes');
-  const [period, setPeriod] = useState<PeriodId>('month');
+  const [tab, setTab] = useState<TabId>(isAdmin ? 'synthese' : 'ventes');
+  const [saleActionBusy, setSaleActionBusy] = useState(false);
 
   const [companies, setCompanies] = useState<CompanyListItem[]>([]);
   const [companyId, setCompanyId] = useState<number | ''>('');
-
-  const [dashboard, setDashboard] = useState<DashboardSummaryReport | null>(null);
-  const [dashboardLoading, setDashboardLoading] = useState(false);
 
   const [expenseDesc, setExpenseDesc] = useState('');
   const [expenseAmount, setExpenseAmount] = useState('');
@@ -116,13 +112,13 @@ export function DashboardPage() {
   const [ledgerSkip, setLedgerSkip] = useState(0);
   const ledgerTake = 10;
   const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerDeletingId, setLedgerDeletingId] = useState<string | null>(null);
 
   const [alerts, setAlerts] = useState<Product[]>([]);
   const [alertsTotal, setAlertsTotal] = useState(0);
   const [alertsSkip, setAlertsSkip] = useState(0);
   const alertsTake = 10;
   const [alertsLoading, setAlertsLoading] = useState(false);
-  const [alertsOpen, setAlertsOpen] = useState(true);
 
   const [movementsLoading, setMovementsLoading] = useState(false);
   const [movements, setMovements] = useState<StockMovementRow[]>([]);
@@ -133,6 +129,16 @@ export function DashboardPage() {
   /** Tri serveur par date de mouvement. */
   const [movementDateOrder, setMovementDateOrder] = useState<'asc' | 'desc'>('desc');
   const [stockQuery, setStockQuery] = useState('');
+  const [registerSessions, setRegisterSessions] = useState<RegisterSessionDetail[]>([]);
+  const [registerSessionsLoading, setRegisterSessionsLoading] = useState(false);
+  const [registerSessionModal, setRegisterSessionModal] = useState<RegisterSessionDetail | null>(null);
+  const [globalCompanyIds, setGlobalCompanyIds] = useState<number[]>([]);
+  const [globalDeptIds, setGlobalDeptIds] = useState<number[]>([]);
+  const [globalItems, setGlobalItems] = useState<GlobalStockSnapshotItem[]>([]);
+  const [globalLoading, setGlobalLoading] = useState(false);
+  const [globalExporting, setGlobalExporting] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
+  const [auditTotal, setAuditTotal] = useState(0);
 
   const [sales, setSales] = useState<Sale[]>([]);
   const [salesTotal, setSalesTotal] = useState(0);
@@ -150,27 +156,30 @@ export function DashboardPage() {
   const [ventesDateFrom, setVentesDateFrom] = useState(defaultMonthStartYmd);
   const [ventesDateTo, setVentesDateTo] = useState(() => formatYmd(new Date()));
   const [ventesPdfLoading, setVentesPdfLoading] = useState(false);
-  const [ventesDepartmentId, setVentesDepartmentId] = useState<number | ''>('');
+  const [ventesDeptModal, setVentesDeptModal] = useState<{
+    label: string;
+    departmentId: number | null;
+    rows: DashboardSalesByProductRow[];
+  } | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
-  const [resumeDateFrom, setResumeDateFrom] = useState(defaultMonthStartYmd);
-  const [resumeDateTo, setResumeDateTo] = useState(() => formatYmd(new Date()));
-  const [ventesResumeSnapshot, setVentesResumeSnapshot] = useState<DashboardBalanceSnapshot | null>(null);
-  const [ventesResumeLoading, setVentesResumeLoading] = useState(false);
   const [txnDateFrom, setTxnDateFrom] = useState(defaultMonthStartYmd);
   const [txnDateTo, setTxnDateTo] = useState(() => formatYmd(new Date()));
 
   const [msg, setMsg] = useAutoClearMessage();
 
-  const snapshot = useMemo(() => (dashboard ? dashboard[period] : null), [dashboard, period]);
-
   const salesByDepartmentGroups = useMemo(() => {
-    const groups: { key: string; label: string; rows: DashboardSalesByProductRow[] }[] = [];
+    const groups: {
+      key: string;
+      label: string;
+      departmentId: number | null;
+      rows: DashboardSalesByProductRow[];
+    }[] = [];
     for (const r of salesByProductRows) {
       const label = r.departmentName?.trim() || 'Sans département';
       const key = String(r.departmentId ?? 'none');
       const last = groups[groups.length - 1];
       if (last && last.key === key) last.rows.push(r);
-      else groups.push({ key, label, rows: [r] });
+      else groups.push({ key, label, departmentId: r.departmentId, rows: [r] });
     }
     return groups;
   }, [salesByProductRows]);
@@ -188,21 +197,7 @@ export function DashboardPage() {
     return { createdFrom, createdTo };
   }, [txnDateFrom, txnDateTo]);
 
-  const salesListQuery = useMemo(
-    () => ({
-      ...salesTxnFilterParams,
-      departmentId: ventesDepartmentId === '' ? undefined : Number(ventesDepartmentId),
-    }),
-    [salesTxnFilterParams, ventesDepartmentId],
-  );
-
-  const resumeTotalOutflows = useMemo(() => {
-    if (!ventesResumeSnapshot) return 0;
-    return (
-      ventesResumeSnapshot.totalOutflows ??
-      ventesResumeSnapshot.purchases + ventesResumeSnapshot.manualExpenses
-    );
-  }, [ventesResumeSnapshot]);
+  const salesListQuery = useMemo(() => ({ ...salesTxnFilterParams }), [salesTxnFilterParams]);
 
   const selectedCompanyName = useMemo(
     () => (companyId === '' ? undefined : companies.find((c) => c.id === companyId)?.name),
@@ -210,7 +205,7 @@ export function DashboardPage() {
   );
 
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!canAccessDashboard) return;
     void getCompanies()
       .then((list) => {
         setCompanies(list);
@@ -218,24 +213,23 @@ export function DashboardPage() {
       })
       .catch(() => setMsg('Impossible de charger les entreprises.', { persist: true }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin]);
+  }, [canAccessDashboard]);
 
   useEffect(() => {
-    if (!isAdmin || companyId === '') {
+    if (!canAccessDashboard || companyId === '') {
       setDepartments([]);
       return;
     }
     void getDepartments(Number(companyId))
       .then(setDepartments)
       .catch(() => setDepartments([]));
-  }, [companyId, isAdmin]);
+  }, [companyId, canAccessDashboard]);
 
   useEffect(() => {
     if (!isAdmin) return;
     if (companyId === '') return;
 
     const cid = Number(companyId);
-    setDashboardLoading(true);
     setAchatsTotalsDateFrom(defaultMonthStartYmd());
     setAchatsTotalsDateTo(formatYmd(new Date()));
     setAchatsTotalsSnapshot(null);
@@ -255,6 +249,12 @@ export function DashboardPage() {
     setMovementsPageSize(5);
     setMovementDateOrder('desc');
     setStockQuery('');
+    setRegisterSessions([]);
+    setGlobalItems([]);
+    setGlobalCompanyIds([]);
+    setGlobalDeptIds([]);
+    setAuditLogs([]);
+    setAuditTotal(0);
     setSales([]);
     setSalesTotal(0);
     setSalesSkip(0);
@@ -262,76 +262,107 @@ export function DashboardPage() {
     setSaleReceiptCompany(null);
     setSaleReceiptPrinter(null);
     setSalesByProductRows([]);
-    setVentesDepartmentId('');
-    setVentesResumeSnapshot(null);
+    setVentesDeptModal(null);
     setVentesDateFrom(defaultMonthStartYmd());
     setVentesDateTo(formatYmd(new Date()));
-    setResumeDateFrom(defaultMonthStartYmd());
-    setResumeDateTo(formatYmd(new Date()));
     setTxnDateFrom(defaultMonthStartYmd());
     setTxnDateTo(formatYmd(new Date()));
 
     void Promise.all([
-      getDashboardSummary({ companyId: cid }),
       getInventoryAlerts({ threshold: 5, companyId: cid, skip: 0, take: alertsTake }),
       getInventoryMovements({ companyId: cid, skip: 0, take: 5, order: 'desc' }),
+      listAuditLogs({ skip: 0, take: 30 }),
     ])
-      .then(([dash, a, mov]) => {
-        setDashboard(dash);
+      .then(([a, mov, audit]) => {
         setAlerts(a.items);
         setAlertsTotal(a.total);
         setAlertsSkip(0);
         setMovements(mov.items);
         setMovementsTotal(mov.total);
+        setAuditLogs(audit.items);
+        setAuditTotal(audit.total);
       })
-      .catch(() => setMsg('Impossible de charger le tableau de bord.', { persist: true }))
-      .finally(() => setDashboardLoading(false));
+      .catch(() => setMsg('Impossible de charger le tableau de bord.', { persist: true }));
   }, [companyId, isAdmin, setMsg]);
 
   useEffect(() => {
-    if (!isAdmin || companyId === '' || tab !== 'ventes') return;
+    if (!isAdmin || companyId === '' || tab !== 'stock') return;
+    const cid = Number(companyId);
+    setGlobalCompanyIds([cid]);
+    setGlobalDeptIds([]);
+    setGlobalItems([]);
+    setRegisterSessionsLoading(true);
+    void listRegisterSessions({ companyId: cid, take: 40 })
+      .then(setRegisterSessions)
+      .catch(() => setRegisterSessions([]))
+      .finally(() => setRegisterSessionsLoading(false));
+  }, [companyId, tab, isAdmin]);
+
+  async function loadGlobalSnapshot() {
+    setGlobalLoading(true);
+    try {
+      const snap = await getGlobalStockSnapshot({
+        companyIds: globalCompanyIds.length ? globalCompanyIds : undefined,
+        departmentIds: globalDeptIds.length ? globalDeptIds : undefined,
+      });
+      setGlobalItems(snap.items);
+    } catch {
+      setMsg('Chargement inventaire impossible.', { persist: true });
+    } finally {
+      setGlobalLoading(false);
+    }
+  }
+
+  async function onExportGlobalPdf() {
+    setGlobalExporting(true);
+    try {
+      const blob = await exportGlobalStockSnapshotPdf({
+        companyIds: globalCompanyIds.length ? globalCompanyIds : undefined,
+        departmentIds: globalDeptIds.length ? globalDeptIds : undefined,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `inventaire_global_${new Date().toISOString().slice(0, 10)}.pdf`;
+      a.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch {
+      setMsg('Export impossible.', { persist: true });
+    } finally {
+      setGlobalExporting(false);
+    }
+  }
+
+  function toggleGlobalCompany(id: number) {
+    setGlobalCompanyIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
+
+  function toggleGlobalDept(id: number) {
+    setGlobalDeptIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
+
+  useEffect(() => {
+    if (!canAccessDashboard || companyId === '' || tab !== 'ventes') return;
     if (!ventesDateFrom || !ventesDateTo || ventesDateFrom > ventesDateTo) return;
     setSalesByProductLoading(true);
     void getDashboardSalesByProduct({
       companyId: Number(companyId),
       dateFrom: ventesDateFrom,
       dateTo: ventesDateTo,
-      departmentId: ventesDepartmentId === '' ? undefined : Number(ventesDepartmentId),
     })
       .then(setSalesByProductRows)
       .catch(() =>
         setMsg('Impossible de charger le détail des ventes par produit.', { persist: true }),
       )
       .finally(() => setSalesByProductLoading(false));
-  }, [companyId, ventesDateFrom, ventesDateTo, ventesDepartmentId, tab, isAdmin, setMsg]);
+  }, [companyId, ventesDateFrom, ventesDateTo, tab, canAccessDashboard, setMsg]);
 
   useEffect(() => {
-    if (!isAdmin || companyId === '' || tab !== 'ventes') return;
-    if (!resumeDateFrom || !resumeDateTo || resumeDateFrom > resumeDateTo) return;
-    setVentesResumeLoading(true);
-    void getDashboardSummaryRange({
-      companyId: Number(companyId),
-      dateFrom: resumeDateFrom,
-      dateTo: resumeDateTo,
-      departmentId: ventesDepartmentId === '' ? undefined : Number(ventesDepartmentId),
-    })
-      .then(setVentesResumeSnapshot)
-      .catch(() =>
-        setMsg('Impossible de charger le résumé financier (plage).', { persist: true }),
-      )
-      .finally(() => setVentesResumeLoading(false));
-  }, [
-    tab,
-    companyId,
-    resumeDateFrom,
-    resumeDateTo,
-    ventesDepartmentId,
-    isAdmin,
-    setMsg,
-  ]);
-
-  useEffect(() => {
-    if (!isAdmin || companyId === '' || tab !== 'ventes') return;
+    if (!canAccessDashboard || companyId === '' || tab !== 'ventes') return;
     setSalesLoading(true);
     void listSales({
       companyId: Number(companyId),
@@ -346,7 +377,7 @@ export function DashboardPage() {
       })
       .catch(() => setMsg('Impossible de charger les transactions de vente.', { persist: true }))
       .finally(() => setSalesLoading(false));
-  }, [companyId, salesListQuery, isAdmin, setMsg, tab]);
+  }, [companyId, salesListQuery, canAccessDashboard, setMsg, tab]);
 
   useEffect(() => {
     if (!isAdmin || companyId === '' || tab !== 'achats') return;
@@ -386,6 +417,30 @@ export function DashboardPage() {
       .finally(() => setLedgerLoading(false));
   }, [tab, companyId, ledgerDateFrom, ledgerDateTo, ledgerNature, isAdmin, setMsg]);
 
+  async function refreshAchatsLedger() {
+    if (companyId === '') return;
+    const cid = Number(companyId);
+    const [range, ledgerRes] = await Promise.all([
+      getDashboardSummaryRange({
+        companyId: cid,
+        dateFrom: achatsTotalsDateFrom,
+        dateTo: achatsTotalsDateTo,
+      }),
+      getFinanceLedger({
+        companyId: cid,
+        dateFrom: ledgerDateFrom,
+        dateTo: ledgerDateTo,
+        nature: ledgerNature,
+        skip: 0,
+        take: ledgerTake,
+      }),
+    ]);
+    setAchatsTotalsSnapshot(range);
+    setLedgerItems(ledgerRes.items);
+    setLedgerTotal(ledgerRes.total);
+    setLedgerSkip(0);
+  }
+
   async function submitExpense(e: FormEvent) {
     e.preventDefault();
     if (companyId === '') return;
@@ -406,30 +461,36 @@ export function DashboardPage() {
       setExpenseEntryDate(formatYmd(new Date()));
       setMsg('Dépense enregistrée.');
 
-      const cid = Number(companyId);
-      const [dash, range, ledgerRes] = await Promise.all([
-        getDashboardSummary({ companyId: cid }),
-        getDashboardSummaryRange({
-          companyId: cid,
-          dateFrom: achatsTotalsDateFrom,
-          dateTo: achatsTotalsDateTo,
-        }),
-        getFinanceLedger({
-          companyId: cid,
-          dateFrom: ledgerDateFrom,
-          dateTo: ledgerDateTo,
-          nature: ledgerNature,
-          skip: 0,
-          take: ledgerTake,
-        }),
-      ]);
-      setDashboard(dash);
-      setAchatsTotalsSnapshot(range);
-      setLedgerItems(ledgerRes.items);
-      setLedgerTotal(ledgerRes.total);
-      setLedgerSkip(0);
+      await refreshAchatsLedger();
     } catch {
       setMsg("Erreur lors de l'enregistrement.", { persist: true });
+    }
+  }
+
+  async function confirmDeleteLedgerRow(row: FinanceLedgerRow) {
+    if (companyId === '') return;
+    const kindLabel =
+      row.kind === 'PURCHASE' ? 'réception d\'achat' : row.kind === 'SALE' ? 'vente' : 'dépense';
+    const detail =
+      row.kind === 'PURCHASE'
+        ? 'Le stock sera annulé pour cette réception et la commande pourra être rouverte.'
+        : row.kind === 'SALE'
+          ? 'La vente, les paiements et l’écriture de caisse seront effacés. Si la vente était complétée, le stock sera rétabli.'
+          : 'Cette dépense manuelle sera retirée du journal et des totaux.';
+    const ok = window.confirm(
+      `Supprimer définitivement cette ligne (${kindLabel}) ?\n\n${row.description}\n\n${detail}`,
+    );
+    if (!ok) return;
+    setLedgerDeletingId(row.id);
+    setMsg('');
+    try {
+      await deleteFinanceLedgerRow({ ledgerRowId: row.id, companyId: Number(companyId) });
+      await refreshAchatsLedger();
+      setMsg('Ligne supprimée.');
+    } catch {
+      setMsg('Impossible de supprimer cette ligne.', { persist: true });
+    } finally {
+      setLedgerDeletingId(null);
     }
   }
 
@@ -544,7 +605,6 @@ export function DashboardPage() {
         companyId: Number(companyId),
         dateFrom: ventesDateFrom,
         dateTo: ventesDateTo,
-        departmentId: ventesDepartmentId === '' ? undefined : Number(ventesDepartmentId),
       });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -564,7 +624,7 @@ export function DashboardPage() {
     const ok = window.confirm(
       `Supprimer définitivement la vente n°${sale.id} ?\n\n` +
         `Cette action est irréversible : la vente, les lignes, les paiements et l’écriture de caisse seront effacés de la base. ` +
-        `Si la vente était encore « complétée », le stock sera rétabli (comme une annulation).`,
+        `Si la vente était encore « complétée », le stock livré sera rétabli.`,
     );
     if (!ok) return;
     setSaleDeletingId(sale.id);
@@ -583,6 +643,54 @@ export function DashboardPage() {
       setMsg('Impossible de supprimer cette vente.', { persist: true });
     } finally {
       setSaleDeletingId(null);
+    }
+  }
+
+  function removeSaleFromList(saleId: number) {
+    setSales((prev) => prev.filter((x) => x.id !== saleId));
+    setSalesTotal((t) => Math.max(0, t - 1));
+    setSaleModal((m) => (m?.id === saleId ? null : m));
+    if (saleModal?.id === saleId) {
+      setSaleReceiptCompany(null);
+      setSaleReceiptPrinter(null);
+    }
+  }
+
+  async function confirmCancelSale(sale: Sale) {
+    const ok = window.confirm(
+      `Annuler la vente n°${sale.id} ?\n\n` +
+        `L’écriture de caisse sera retirée. Le stock déjà livré sera réintégré.`,
+    );
+    if (!ok) return;
+    setSaleActionBusy(true);
+    setMsg('');
+    try {
+      await cancelSale(sale.id);
+      removeSaleFromList(sale.id);
+      setMsg(`Vente n°${sale.id} annulée.`);
+    } catch {
+      setMsg('Impossible d’annuler cette vente.', { persist: true });
+    } finally {
+      setSaleActionBusy(false);
+    }
+  }
+
+  async function confirmRefundSale(sale: Sale) {
+    const ok = window.confirm(
+      `Rembourser la vente n°${sale.id} (${formatMoney(sale.total)}) ?\n\n` +
+        `L’écriture de caisse sera retirée. Le stock déjà livré sera réintégré.`,
+    );
+    if (!ok) return;
+    setSaleActionBusy(true);
+    setMsg('');
+    try {
+      await refundSale(sale.id);
+      removeSaleFromList(sale.id);
+      setMsg(`Vente n°${sale.id} remboursée.`);
+    } catch {
+      setMsg('Impossible de rembourser cette vente.', { persist: true });
+    } finally {
+      setSaleActionBusy(false);
     }
   }
 
@@ -658,40 +766,33 @@ export function DashboardPage() {
     });
   }, [movements, stockQuery]);
 
-  const periodLabel = (p: PeriodId) => {
-    switch (p) {
-      case 'day':
-        return "Aujourd'hui";
-      case 'week':
-        return '7 derniers jours';
-      case 'month':
-        return 'Mois en cours';
-    }
-  };
-
-  if (!isAdmin) {
+  if (!canAccessDashboard) {
     return (
       <div className="page-inner">
-        <p className="info-text">Accès réservé à l'administrateur.</p>
+        <p className="info-text">Accès réservé à l&apos;administrateur ou au gérant.</p>
       </div>
     );
   }
 
+  const dashboardTabs = (
+    isAdmin
+      ? ([
+          ['synthese', 'Synthèse'],
+          ['ventes', 'Ventes'],
+          ['stock', 'Stock & Mouvements'],
+          ['achats', 'Achats & Dépenses'],
+        ] as const)
+      : ([['ventes', 'Ventes']] as const)
+  );
+
   return (
     <div className="page-inner">
       <header className="page-header">
-        <h1>Tableau de bord (ADMIN)</h1>
+        <h1>Tableau de bord</h1>
       </header>
 
       <div className="config-tabs" style={{ marginBottom: '0.9rem' }}>
-        {(
-          [
-            ['ventes', 'Ventes'],
-            ['stock', 'Stock & Mouvements'],
-            ['achats', 'Achats & Dépenses'],
-            ['synthese', 'Synthèse'],
-          ] as const
-        ).map(([id, label]) => (
+        {dashboardTabs.map(([id, label]) => (
           <button
             key={id}
             type="button"
@@ -707,8 +808,13 @@ export function DashboardPage() {
         className="grid"
         style={{
           gridTemplateColumns:
-            tab === 'synthese' ? 'minmax(240px, 1fr)' : 'minmax(240px, 1fr) minmax(240px, 1fr)',
+            tab === 'synthese'
+              ? 'none'
+              : tab === 'achats' || tab === 'stock' || tab === 'ventes'
+                ? 'minmax(240px, 1fr)'
+                : 'minmax(240px, 1fr) minmax(240px, 1fr)',
           gap: '0.9rem',
+          display: tab === 'synthese' ? 'none' : undefined,
         }}
       >
         <div className="card" style={{ padding: '0.9rem 1.1rem' }}>
@@ -726,58 +832,20 @@ export function DashboardPage() {
             </select>
           </label>
         </div>
-        {tab === 'ventes' ? (
-          <div className="card" style={{ padding: '0.9rem 1.1rem' }}>
-            <label style={{ marginBottom: 0 }}>
-              Département
-              <select
-                value={ventesDepartmentId === '' ? '' : String(ventesDepartmentId)}
-                onChange={(e) => setVentesDepartmentId(e.target.value ? Number(e.target.value) : '')}
-              >
-                <option value="">Tous les départements</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-        ) : tab === 'synthese' ? null : (
-          <div className="card" style={{ padding: '0.9rem 1.1rem' }}>
-            <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-              {(['day', 'week', 'month'] as const).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  className={period === p ? 'tab active' : 'tab'}
-                  onClick={() => setPeriod(p)}
-                >
-                  {periodLabel(p)}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
       </section>
 
       {msg ? <p className="info-text" style={{ marginTop: '0.9rem' }}>{msg}</p> : null}
 
-      {companyId === '' ? (
-        <p className="info-text" style={{ marginTop: '0.9rem' }}>Chargement du dashboard…</p>
-      ) : tab !== 'ventes' && tab !== 'achats' && (dashboardLoading || !snapshot) ? (
-        <p className="info-text" style={{ marginTop: '0.9rem' }}>Chargement du dashboard…</p>
+      {tab === 'synthese' ? (
+        companies.length === 0 ? (
+          <p className="info-text" style={{ marginTop: '0.9rem' }}>Chargement…</p>
+        ) : (
+          <DashboardSyntheseTab companies={companies} onMessage={setMsg} />
+        )
+      ) : companyId === '' ? (
+        <p className="info-text" style={{ marginTop: '0.9rem' }}>Chargement…</p>
       ) : (
         <>
-          {snapshot && tab === 'synthese' && dashboard ? (
-            <DashboardSyntheseTab
-              companyId={Number(companyId)}
-              companyName={selectedCompanyName}
-              departments={departments}
-              onMessage={setMsg}
-            />
-          ) : null}
-
           {tab === 'ventes' ? (
             <>
               <section className="card" style={{ marginTop: '1rem' }}>
@@ -826,202 +894,52 @@ export function DashboardPage() {
                   <p className="info-text">Aucune vente sur cette plage pour cette entreprise.</p>
                 ) : (
                   <>
-                    {salesByDepartmentGroups.map((g) => {
-                      const deptTotal = g.rows.reduce((s, r) => s + r.totalSubtotal, 0);
-                      return (
-                        <div key={g.key} style={{ marginTop: '1.25rem' }}>
-                          <h3 style={{ fontSize: '1.05rem', margin: '0 0 0.5rem' }}>{g.label}</h3>
-                          <div className="table-wrap">
-                            <table className="data-table">
-                              <thead>
-                                <tr>
-                                  <th>Produit / service</th>
-                                  <th>Type</th>
-                                  <th>Qté (base)</th>
-                                  <th>Total vendu</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {g.rows.map((r) => (
-                                  <tr key={r.productId}>
-                                    <td>{r.productName}</td>
-                                    <td>{r.isService ? 'Service' : 'Produit'}</td>
-                                    <td className="journal-amt">{r.quantity.toFixed(3)}</td>
-                                    <td className="journal-amt">{r.totalSubtotal.toFixed(2)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                              <tfoot>
-                                <tr>
-                                  <td colSpan={3}>
-                                    <strong>Sous-total {g.label}</strong>
-                                  </td>
-                                  <td className="journal-amt">
-                                    <strong>{deptTotal.toFixed(2)}</strong>
-                                  </td>
-                                </tr>
-                              </tfoot>
-                            </table>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    <div className="table-wrap" style={{ marginTop: '1.25rem' }}>
-                      <table className="data-table">
-                        <tbody>
-                          <tr>
-                            <td colSpan={3}>
-                              <strong>Total général ({ventesDateFrom} → {ventesDateTo})</strong>
-                            </td>
-                            <td className="journal-amt">
-                              <strong>{ventesGrandTotal.toFixed(2)}</strong>
-                            </td>
-                          </tr>
-                        </tbody>
-                      </table>
+                    <div className="ventes-dept-grid">
+                      {salesByDepartmentGroups.map((g) => {
+                        const deptTotal = g.rows.reduce((s, r) => s + r.totalSubtotal, 0);
+                        const lineCount = g.rows.length;
+                        return (
+                          <button
+                            key={g.key}
+                            type="button"
+                            className="ventes-dept-card"
+                            onClick={() =>
+                              setVentesDeptModal({
+                                label: g.label,
+                                departmentId: g.departmentId,
+                                rows: g.rows,
+                              })
+                            }
+                          >
+                            <span className="ventes-dept-card-label">{g.label}</span>
+                            <span className="ventes-dept-card-meta">
+                              {lineCount} article{lineCount > 1 ? 's' : ''}
+                            </span>
+                            <span className="ventes-dept-card-total">{formatMoney(deptTotal)}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="ventes-dept-grand-total">
+                      <span>Total général ({ventesDateFrom} → {ventesDateTo})</span>
+                      <strong>{formatMoney(ventesGrandTotal)}</strong>
                     </div>
                   </>
                 )}
               </section>
 
-              <section className="card" style={{ marginTop: '1rem' }}>
-                <h2>Résumé financier</h2>
-                <div
-                  className="form-grid inline"
-                  style={{
-                    marginBottom: '0.85rem',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
-                  }}
-                >
-                  <label>
-                    Date début
-                    <input
-                      type="date"
-                      value={resumeDateFrom}
-                      onChange={(e) => setResumeDateFrom(e.target.value)}
-                    />
-                  </label>
-                  <label>
-                    Date fin
-                    <input
-                      type="date"
-                      value={resumeDateTo}
-                      onChange={(e) => setResumeDateTo(e.target.value)}
-                    />
-                  </label>
-                </div>
-                {resumeDateFrom > resumeDateTo ? (
-                  <p className="info-text">La date de fin doit être au moins égale à la date de début.</p>
-                ) : null}
-                {ventesResumeLoading && !ventesResumeSnapshot ? (
-                  <p className="info-text">Chargement du résumé…</p>
-                ) : !ventesResumeSnapshot ? (
-                  <p className="info-text">—</p>
-                ) : (
-                  <>
-                    <div
-                      style={{
-                        display: 'flex',
-                        gap: '0.65rem',
-                        flexWrap: 'wrap',
-                        alignItems: 'stretch',
-                      }}
-                    >
-                      <div
-                        style={{
-                          flex: '1 1 120px',
-                          minWidth: 100,
-                          padding: '0.4rem 0.65rem',
-                          borderRadius: 8,
-                          border: '1px solid #a7f3d0',
-                          background: 'linear-gradient(180deg, #ecfdf5 0%, #d1fae5 100%)',
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: '0.68rem',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.04em',
-                            color: '#047857',
-                            fontWeight: 600,
-                          }}
-                        >
-                          Revenus
-                        </div>
-                        <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#065f46', lineHeight: 1.2 }}>
-                          {ventesResumeSnapshot.sales.toFixed(2)}
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          flex: '1 1 120px',
-                          minWidth: 100,
-                          padding: '0.4rem 0.65rem',
-                          borderRadius: 8,
-                          border: '1px solid #fecaca',
-                          background: 'linear-gradient(180deg, #fef2f2 0%, #fee2e2 100%)',
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: '0.68rem',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.04em',
-                            color: '#b91c1c',
-                            fontWeight: 600,
-                          }}
-                        >
-                          Sorties
-                        </div>
-                        <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#991b1b', lineHeight: 1.2 }}>
-                          {resumeTotalOutflows.toFixed(2)}
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          flex: '1 1 120px',
-                          minWidth: 100,
-                          padding: '0.4rem 0.65rem',
-                          borderRadius: 8,
-                          border:
-                            ventesResumeSnapshot.balance < 0 ? '1px solid #fecaca' : '1px solid #bfdbfe',
-                          background:
-                            ventesResumeSnapshot.balance < 0
-                              ? 'linear-gradient(180deg, #fffbeb 0%, #fef3c7 100%)'
-                              : 'linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)',
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: '0.68rem',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.04em',
-                            color: ventesResumeSnapshot.balance < 0 ? '#b45309' : '#1d4ed8',
-                            fontWeight: 600,
-                          }}
-                        >
-                          Résultat net
-                        </div>
-                        <div
-                          style={{
-                            fontSize: '1.05rem',
-                            fontWeight: 700,
-                            color: ventesResumeSnapshot.balance < 0 ? '#b91c1c' : '#1e3a8a',
-                            lineHeight: 1.2,
-                          }}
-                        >
-                          {ventesResumeSnapshot.balance.toFixed(2)}
-                        </div>
-                      </div>
-                    </div>
-                    <p className="dept-hint" style={{ marginTop: '0.65rem', marginBottom: 0 }}>
-                      Période : {resumeDateFrom} → {resumeDateTo}. Détail sorties : achats reçus{' '}
-                      {ventesResumeSnapshot.purchases.toFixed(2)} · dépenses manuelles{' '}
-                      {ventesResumeSnapshot.manualExpenses.toFixed(2)}
-                    </p>
-                  </>
-                )}
-              </section>
+              {ventesDeptModal ? (
+                <VentesDepartmentModal
+                  label={ventesDeptModal.label}
+                  departmentId={ventesDeptModal.departmentId}
+                  rows={ventesDeptModal.rows}
+                  dateFrom={ventesDateFrom}
+                  dateTo={ventesDateTo}
+                  companyId={companyId}
+                  onClose={() => setVentesDeptModal(null)}
+                  onMessage={setMsg}
+                />
+              ) : null}
 
               <section className="card" style={{ marginTop: '1rem' }}>
                 <h2>Transactions de vente</h2>
@@ -1060,17 +978,19 @@ export function DashboardPage() {
                         <th>Total</th>
                         <th>Caissier</th>
                         <th>Statut</th>
-                        {isAdmin ? <th>Actions</th> : null}
+                        {canCancelOrRefund || isAdmin ? <th>Actions</th> : null}
                       </tr>
                     </thead>
                     <tbody>
                       {salesLoading && sales.length === 0 ? (
                         <tr>
-                          <td colSpan={isAdmin ? 7 : 6}>Chargement…</td>
+                          <td colSpan={canCancelOrRefund || isAdmin ? 7 : 6}>Chargement…</td>
                         </tr>
                       ) : sales.length === 0 ? (
                         <tr>
-                          <td colSpan={isAdmin ? 7 : 6}>Aucune vente pour cette entreprise.</td>
+                          <td colSpan={canCancelOrRefund || isAdmin ? 7 : 6}>
+                            Aucune vente pour cette entreprise.
+                          </td>
                         </tr>
                       ) : (
                         sales.map((s) => (
@@ -1091,28 +1011,54 @@ export function DashboardPage() {
                             <td>{s.id}</td>
                             <td>{new Date(s.createdAt).toLocaleString()}</td>
                             <td>{(s.clientName && s.clientName.trim()) || '—'}</td>
-                            <td className="journal-amt">{Number(s.total).toFixed(2)}</td>
+                            <td className="journal-amt">{formatMoney(s.total)}</td>
                             <td>
                               <small>{s.user?.fullName?.trim() || s.cashier || s.user?.phone || '—'}</small>
                             </td>
-                            <td>{s.status}</td>
-                            {isAdmin ? (
+                            <td>
+                              {s.status === 'COMPLETED'
+                                ? 'Complétée'
+                                : s.status === 'CANCELLED'
+                                  ? 'Annulée'
+                                  : s.status === 'REFUNDED'
+                                    ? 'Remboursée'
+                                    : s.status}
+                            </td>
+                            {canCancelOrRefund || isAdmin ? (
                               <td
                                 onClick={(e) => e.stopPropagation()}
                                 onKeyDown={(e) => e.stopPropagation()}
                               >
-                                <button
-                                  type="button"
-                                  className="btn btn-danger btn-sm"
-                                  disabled={saleDeletingId === s.id}
-                                  aria-label={`Supprimer définitivement la vente n°${s.id}`}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void confirmDeleteSale(s);
-                                  }}
-                                >
-                                  {saleDeletingId === s.id ? '…' : 'Supprimer'}
-                                </button>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                                  {canCancelOrRefund && s.status === 'COMPLETED' ? (
+                                    <button
+                                      type="button"
+                                      className="btn btn-secondary btn-sm"
+                                      disabled={saleActionBusy}
+                                      aria-label={`Rembourser la vente n°${s.id}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void confirmRefundSale(s);
+                                      }}
+                                    >
+                                      Rembourser
+                                    </button>
+                                  ) : null}
+                                  {isAdmin ? (
+                                    <button
+                                      type="button"
+                                      className="btn btn-danger btn-sm"
+                                      disabled={saleDeletingId === s.id}
+                                      aria-label={`Supprimer définitivement la vente n°${s.id}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void confirmDeleteSale(s);
+                                      }}
+                                    >
+                                      {saleDeletingId === s.id ? '…' : 'Supprimer'}
+                                    </button>
+                                  ) : null}
+                                </div>
                               </td>
                             ) : null}
                           </tr>
@@ -1154,17 +1100,14 @@ export function DashboardPage() {
                       Libellé
                       <input value={expenseDesc} onChange={(e) => setExpenseDesc(e.target.value)} required />
                     </label>
-                    <label>
-                      Montant
-                      <input
-                        type="number"
-                        min={0.01}
-                        step={0.01}
-                        value={expenseAmount}
-                        onChange={(e) => setExpenseAmount(e.target.value)}
-                        required
-                      />
-                    </label>
+                    <MoneyField
+                      label="Montant"
+                      min={0.01}
+                      step={0.01}
+                      value={expenseAmount}
+                      onChange={(e) => setExpenseAmount(e.target.value)}
+                      required
+                    />
                     <label>
                       Date de la dépense
                       <input
@@ -1218,11 +1161,11 @@ export function DashboardPage() {
                     <section className="grid kpis" style={{ marginBottom: 0 }}>
                       <div className="card kpi">
                         <div className="kpi-label">Achats reçus</div>
-                        <div className="kpi-value">{achatsTotalsSnapshot.purchases.toFixed(2)}</div>
+                        <div className="kpi-value">{formatMoney(achatsTotalsSnapshot.purchases)}</div>
                       </div>
                       <div className="card kpi">
                         <div className="kpi-label">Dépenses manuelles</div>
-                        <div className="kpi-value">{achatsTotalsSnapshot.manualExpenses.toFixed(2)}</div>
+                        <div className="kpi-value">{formatMoney(achatsTotalsSnapshot.manualExpenses)}</div>
                       </div>
                     </section>
                   )}
@@ -1275,22 +1218,24 @@ export function DashboardPage() {
                     ? 'Aucune ligne sur cette plage.'
                     : `Affichage ${ledgerItems.length} / ${ledgerTotal} ligne${ledgerTotal > 1 ? 's' : ''}.`}
                 </p>
-                <ul className="journal-list">
+                <ul className="journal-list journal-list--actions">
                   {ledgerLoading && ledgerItems.length === 0 ? (
-                    <li className="journal-row">
+                    <li className="journal-row journal-row--actions">
                       <span>Chargement…</span>
+                      <span />
                       <span />
                       <span />
                     </li>
                   ) : ledgerItems.length === 0 ? (
-                    <li className="journal-row">
+                    <li className="journal-row journal-row--actions">
                       <span>Aucune entrée</span>
+                      <span />
                       <span />
                       <span />
                     </li>
                   ) : (
                     ledgerItems.map((row) => (
-                      <li key={row.id} className="journal-row">
+                      <li key={row.id} className="journal-row journal-row--actions">
                         <span className={`journal-type ${row.kind.toLowerCase()}`}>
                           {row.kind === 'PURCHASE'
                             ? 'Achat'
@@ -1305,7 +1250,15 @@ export function DashboardPage() {
                             {row.user?.fullName?.trim() || row.user?.phone || '—'}
                           </span>
                         </span>
-                        <span className="journal-amt">{row.amount.toFixed(2)}</span>
+                        <span className="journal-amt">{formatMoney(row.amount)}</span>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm journal-delete-btn"
+                          disabled={ledgerDeletingId === row.id}
+                          onClick={() => void confirmDeleteLedgerRow(row)}
+                        >
+                          {ledgerDeletingId === row.id ? '…' : 'Supprimer'}
+                        </button>
                       </li>
                     ))
                   )}
@@ -1328,183 +1281,241 @@ export function DashboardPage() {
 
           {tab === 'stock' ? (
             <>
-              <section className="grid two-col" style={{ marginTop: '1rem' }}>
-              <section className="card alert-banner alerts-accordion">
-                <button
-                  type="button"
-                  className="alerts-accordion-trigger"
-                  id="alerts-stock-faible-heading"
-                  aria-expanded={alertsOpen}
-                  aria-controls="alerts-stock-faible-panel"
-                  onClick={() => setAlertsOpen((o) => !o)}
-                  disabled={alerts.length === 0}
-                >
-                  <span className="alerts-accordion-title">
-                    Alertes stock faible
-                    <span className="alerts-count">{alertsTotal}</span>
-                  </span>
-                  <span
-                    className={`catalog-accordion-chevron${alertsOpen ? ' is-open' : ''}`}
-                    aria-hidden
-                  />
-                </button>
+              <StockLowAlertsPanel
+                alerts={alerts}
+                total={alertsTotal}
+                loading={alertsLoading}
+                canLoadMore={alertsSkip + alertsTake < alertsTotal}
+                onLoadMore={() => void loadMoreAlerts()}
+              />
 
-                {alerts.length > 0 && alertsOpen ? (
-                  <div
-                    className="alerts-accordion-panel"
-                    id="alerts-stock-faible-panel"
-                    role="region"
-                    aria-labelledby="alerts-stock-faible-heading"
-                  >
-                    <ul className="alerts-list">
-                      {alerts.map((p) => (
-                        <li key={p.id}>
-                          {p.name} — {Number(p.stock).toFixed(3)} (min {Number(p.stockMin).toFixed(3)})
-                        </li>
-                      ))}
-                    </ul>
-                    {alertsSkip + alertsTake < alertsTotal ? (
-                      <div className="table-actions" style={{ marginTop: '0.75rem' }}>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          onClick={() => void loadMoreAlerts()}
-                          disabled={alertsLoading}
-                        >
-                          {alertsLoading ? 'Chargement…' : 'Charger plus'}
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : alerts.length === 0 ? (
-                  <div className="alerts-accordion-panel" style={{ paddingTop: '0.9rem' }}>
-                    <p className="page-lead" style={{ margin: 0 }}>
-                      Aucun produit sous le stock minimum.
-                    </p>
-                  </div>
-                ) : null}
-              </section>
-
-              <section className="card">
-                <h2>Mouvements récents (stock)</h2>
-
-                <div className="form-grid inline" style={{ marginBottom: '0.75rem' }}>
-                  <label style={{ gridColumn: '1 / span 2' }}>
-                    Recherche (lignes affichées)
-                    <input value={stockQuery} onChange={(e) => setStockQuery(e.target.value)} placeholder="Ex. réception, ajustement, produit…" />
-                  </label>
-                  <label>
-                    Tri par date
-                    <select
-                      value={movementDateOrder}
-                      onChange={(e) => {
-                        const v = e.target.value as 'asc' | 'desc';
-                        setMovementDateOrder(v);
-                        void refetchMovementsFromStart({ order: v, take: movementsPageSize });
-                      }}
-                    >
-                      <option value="desc">Plus récent d’abord</option>
-                      <option value="asc">Plus ancien d’abord</option>
-                    </select>
-                  </label>
-                  <label>
-                    Lignes par chargement
-                    <select
-                      value={movementsPageSize}
-                      onChange={(e) => {
-                        const v = e.target.value === '10' ? 10 : 5;
-                        setMovementsPageSize(v);
-                        void refetchMovementsFromStart({ order: movementDateOrder, take: v });
-                      }}
-                    >
-                      <option value={5}>5</option>
-                      <option value={10}>10</option>
-                    </select>
-                  </label>
-                  <div style={{ alignSelf: 'end' }}>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      disabled={movementsLoading}
-                      onClick={() => void resetMovementsToInitial()}
-                    >
-                      Réinitialiser
-                    </button>
-                  </div>
-                  <div style={{ gridColumn: '1 / -1' }}>
-                    <p className="dept-hint" style={{ margin: 0 }}>
-                      {filteredMovements.length} ligne{filteredMovements.length > 1 ? 's' : ''} affichée
-                      {filteredMovements.length > 1 ? 's' : ''} (recherche locale)
-                    </p>
-                  </div>
-                </div>
-
+              <section className="card" style={{ marginTop: '1rem' }}>
+                <h2>Sessions caisse</h2>
                 <div className="table-wrap">
                   <table className="data-table">
                     <thead>
                       <tr>
-                        <th>Date</th>
-                        <th>Type</th>
-                        <th>Produit</th>
-                        <th>Qté</th>
-                        <th>Unité</th>
-                        <th>Motif</th>
+                        <th>Comptoir</th>
+                        <th>Département</th>
+                        <th>Caissier</th>
+                        <th>Ouverture</th>
+                        <th>Fermeture</th>
+                        <th>Statut</th>
+                        <th>Écart espèces</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {movementsLoading && movements.length === 0 ? (
+                      {registerSessionsLoading ? (
                         <tr>
-                          <td colSpan={6}>Chargement…</td>
+                          <td colSpan={7}>…</td>
                         </tr>
-                      ) : filteredMovements.length === 0 ? (
+                      ) : registerSessions.length === 0 ? (
                         <tr>
-                          <td colSpan={6}>Aucun mouvement.</td>
+                          <td colSpan={7}>—</td>
                         </tr>
                       ) : (
-                        filteredMovements.map((m) => (
-                          <tr key={m.id}>
-                            <td>{new Date(m.createdAt).toLocaleString()}</td>
-                            <td>{movementTypeLabel(m.type)}</td>
-                            <td>{m.product?.name ?? `#${m.productId}`}</td>
-                            <td className="journal-amt">{Number(m.quantity).toFixed(3)}</td>
-                            <td>
-                              <small>{stockPackagingLabelFromMovementProduct(m.product)}</small>
+                        registerSessions.map((s) => (
+                          <tr
+                            key={s.id}
+                            className="dashboard-sale-row"
+                            role="button"
+                            tabIndex={0}
+                            style={{ cursor: 'pointer' }}
+                            onClick={() => setRegisterSessionModal(s)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setRegisterSessionModal(s);
+                              }
+                            }}
+                          >
+                            <td>{s.register.code}</td>
+                            <td>{s.department.name}</td>
+                            <td>{formatUserLabel(s.openedBy)}</td>
+                            <td>{new Date(s.openedAt).toLocaleString()}</td>
+                            <td>{s.closedAt ? new Date(s.closedAt).toLocaleString() : '—'}</td>
+                            <td>{s.status === 'OPEN' ? 'Ouverte' : 'Fermée'}</td>
+                            <td className="journal-amt">
+                              {s.cashVariance != null ? formatMoney(Number(s.cashVariance)) : '—'}
                             </td>
-                            <td>{movementReasonLabel(m.reason)}</td>
                           </tr>
                         ))
                       )}
                     </tbody>
                   </table>
                 </div>
-
-                {movements.length > 0 ? (
-                  <p className="dept-hint" style={{ marginBottom: 0 }}>
-                    Chargées {movements.length} / {movementsTotal} au total · pas de {movementsPageSize} · tri date{' '}
-                    {movementDateOrder === 'desc' ? '(récent → ancien)' : '(ancien → récent)'}
-                    {stockQuery.trim() ? ' · recherche appliquée sur la liste chargée' : ''}.
-                  </p>
-                ) : null}
-
-                {movementsSkip + movementsPageSize < movementsTotal ? (
-                  <div className="table-actions" style={{ marginTop: '0.75rem' }}>
-                    <button type="button" className="btn btn-secondary" onClick={() => void loadMoreMovements()}>
-                      {movementsLoading ? 'Chargement…' : 'Charger plus'}
-                    </button>
-                  </div>
-                ) : null}
               </section>
-            </section>
+
+              <section className="card" style={{ marginTop: '1rem' }}>
+                <h2>Inventaire global</h2>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.75rem' }}>
+                  <div>
+                    <strong>Entreprises</strong>
+                    <ul style={{ listStyle: 'none', padding: 0, margin: '0.35rem 0 0' }}>
+                      {companies.map((c) => (
+                        <li key={c.id}>
+                          <label className="checkbox-row">
+                            <input
+                              type="checkbox"
+                              checked={globalCompanyIds.includes(c.id)}
+                              onChange={() => toggleGlobalCompany(c.id)}
+                            />
+                            {c.name}
+                          </label>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <strong>Départements</strong>
+                    <ul style={{ listStyle: 'none', padding: 0, margin: '0.35rem 0 0' }}>
+                      {departments.map((d) => (
+                        <li key={d.id}>
+                          <label className="checkbox-row">
+                            <input
+                              type="checkbox"
+                              checked={globalDeptIds.includes(d.id)}
+                              onChange={() => toggleGlobalDept(d.id)}
+                            />
+                            {d.name}
+                          </label>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+                <div className="table-actions" style={{ marginBottom: '0.75rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={globalLoading}
+                    onClick={() => void loadGlobalSnapshot()}
+                  >
+                    {globalLoading ? '…' : 'Charger'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={globalExporting}
+                    onClick={() => void onExportGlobalPdf()}
+                  >
+                    {globalExporting ? '…' : 'Export PDF'}
+                  </button>
+                </div>
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Entreprise</th>
+                        <th>Département</th>
+                        <th>Produit</th>
+                        <th>Stock</th>
+                        <th>Min</th>
+                        <th>Statut</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {globalItems.length === 0 ? (
+                        <tr>
+                          <td colSpan={6}>—</td>
+                        </tr>
+                      ) : (
+                        globalItems.map((item) => (
+                          <tr key={item.id}>
+                            <td>{item.company?.name ?? '—'}</td>
+                            <td>{item.department?.name ?? '—'}</td>
+                            <td>{item.name}</td>
+                            <td className="journal-amt">{formatQuantity(item.stock)}</td>
+                            <td className="journal-amt">{formatQuantity(item.stockMin)}</td>
+                            <td>{item.lowStock ? 'Bas' : 'OK'}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section className="card" style={{ marginTop: '1rem' }}>
+                <h2>Journal d&apos;audit (actions utilisateurs)</h2>
+                <p className="dept-hint" style={{ marginTop: 0 }}>
+                  Ventes, stocks, achats, produits, inventaires, finance — {auditTotal} entrée
+                  {auditTotal > 1 ? 's' : ''} au total.
+                </p>
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Utilisateur</th>
+                        <th>Action</th>
+                        <th>Entité</th>
+                        <th>Réf.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {auditLogs.length === 0 ? (
+                        <tr>
+                          <td colSpan={5}>Aucune entrée d&apos;audit.</td>
+                        </tr>
+                      ) : (
+                        auditLogs.map((row) => (
+                          <tr key={row.id}>
+                            <td>{new Date(row.createdAt).toLocaleString()}</td>
+                            <td>{formatUserLabel(row.user)}</td>
+                            <td>
+                              <small>{auditActionLabel(row.action)}</small>
+                            </td>
+                            <td>{row.entity}</td>
+                            <td>{row.entityId ?? '—'}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <StockMovementsPanel
+                movements={movements}
+                filteredMovements={filteredMovements}
+                movementsTotal={movementsTotal}
+                movementsSkip={movementsSkip}
+                movementsPageSize={movementsPageSize}
+                movementDateOrder={movementDateOrder}
+                stockQuery={stockQuery}
+                loading={movementsLoading}
+                onStockQueryChange={setStockQuery}
+                onOrderChange={(order) => {
+                  setMovementDateOrder(order);
+                  void refetchMovementsFromStart({ order, take: movementsPageSize });
+                }}
+                onPageSizeChange={(size) => {
+                  setMovementsPageSize(size);
+                  void refetchMovementsFromStart({ order: movementDateOrder, take: size });
+                }}
+                onReset={() => void resetMovementsToInitial()}
+                onLoadMore={() => void loadMoreMovements()}
+              />
             </>
           ) : null}
         </>
       )}
+
+      <RegisterSessionModal
+        session={registerSessionModal}
+        onClose={() => setRegisterSessionModal(null)}
+      />
 
       <SaleDetailModal
         sale={saleModal}
         companyName={selectedCompanyName}
         company={saleReceiptCompany}
         printer={saleReceiptPrinter}
+        canCancelOrRefund={canCancelOrRefund}
+        actionBusy={saleActionBusy}
+        onCancelSale={canCancelOrRefund ? confirmCancelSale : undefined}
+        onRefundSale={canCancelOrRefund ? confirmRefundSale : undefined}
         onClose={() => {
           setSaleModal(null);
           setSaleReceiptCompany(null);

@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Post, UseGuards, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { GetUser } from '../../common/decorators/get-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -76,5 +76,19 @@ export class FinanceController {
   @Roles('ADMIN', 'MANAGER', 'ACCOUNTANT')
   closeCash(@Body() dto: CloseCashDto, @GetUser() user?: { id?: number }) {
     return this.financeService.closeCash(dto, user?.id);
+  }
+
+  @Delete('ledger/:ledgerRowId')
+  @Roles('ADMIN')
+  deleteLedgerRow(
+    @Param('ledgerRowId') ledgerRowId: string,
+    @Query('companyId') companyIdRaw?: string,
+    @GetUser() user?: { id?: number },
+  ) {
+    const companyId = companyIdRaw ? Number.parseInt(companyIdRaw, 10) : NaN;
+    if (!Number.isFinite(companyId) || companyId <= 0) {
+      throw new BadRequestException('companyId requis et valide');
+    }
+    return this.financeService.deleteLedgerRow(ledgerRowId, companyId, user?.id);
   }
 }

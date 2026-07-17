@@ -3,6 +3,7 @@ import { FinanceType, MovementType, Prisma } from '@prisma/client';
 import { resolveVolumeUnitPrice } from '../../common/utils/volume-unit-price';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { DeliveriesService } from '../deliveries/deliveries.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { SalesRepository } from './sales.repository';
@@ -14,6 +15,7 @@ export class SalesService {
     private readonly salesRepository: SalesRepository,
     private readonly inventoryService: InventoryService,
     private readonly auditService: AuditService,
+    private readonly deliveriesService: DeliveriesService,
   ) {}
 
   async create(createSaleDto: CreateSaleDto, userId?: number) {
@@ -37,6 +39,7 @@ export class SalesService {
       const saleItemsData: Prisma.SaleItemCreateWithoutSaleInput[] = [];
       let total = 0;
       let firstCompanyId: number | null = null;
+      let firstDepartmentId: number | null = null;
 
       for (const item of createSaleDto.items) {
         const psu = await tx.productSaleUnit.findUnique({
@@ -54,6 +57,9 @@ export class SalesService {
         const product = psu.product;
         if (firstCompanyId === null) {
           firstCompanyId = product.companyId;
+        }
+        if (firstDepartmentId === null && product.departmentId != null) {
+          firstDepartmentId = product.departmentId;
         }
         const unitsPerPackage = Number(psu.unitsPerPackage);
         const baseQuantity = unitsPerPackage * item.quantity;
@@ -94,30 +100,7 @@ export class SalesService {
           ? `${product.name} (${psu.labelOverride})`
           : `${product.name} (${psu.packagingUnit.label})`;
 
-        if (product.trackStock && !product.isService) {
-          await this.inventoryService.decrementStockTx(
-            tx,
-            product.id,
-            baseQuantity,
-            userId,
-            'Vente',
-          );
-        }
-
-        // Service avec recette (BOM) : le stock des composants doit sortir (mouvement OUT) comme pour une vente classique.
-        if (product.isService && recipe?.components.length) {
-          for (const c of recipe.components) {
-            const need = Number(c.quantityPerParentBaseUnit) * baseQuantity;
-            await this.inventoryService.decrementStockTx(
-              tx,
-              c.componentProductId,
-              need,
-              userId,
-              `Vente — ${product.name}`,
-            );
-          }
-        }
-
+        // Stock : contrôle de dispo à l’encaissement, sortie réelle à la livraison.
         saleItemsData.push({
           quantity: item.quantity,
           baseQuantity,
@@ -142,7 +125,14 @@ export class SalesService {
       const clientNameRaw =
         createSaleDto.clientName && createSaleDto.clientName.trim() ? createSaleDto.clientName.trim() : null;
 
-      const cashier = userId ? `User#${userId}` : null;
+      let cashier: string | null = null;
+      if (userId) {
+        const u = await tx.user.findUnique({
+          where: { id: userId },
+          select: { fullName: true, phone: true },
+        });
+        cashier = u?.fullName?.trim() || u?.phone?.trim() || `User#${userId}`;
+      }
       const storeId = createSaleDto.storeId ?? null;
       const registerId = createSaleDto.registerId ?? null;
 
@@ -205,6 +195,25 @@ export class SalesService {
         }
       }
 
+      if (firstCompanyId != null) {
+        const createdItems = await tx.saleItem.findMany({
+          where: { saleId },
+          select: { id: true, quantity: true },
+          orderBy: { id: 'asc' },
+        });
+        if (createdItems.length) {
+          await this.deliveriesService.createFromSaleTx(tx, {
+            saleId,
+            companyId: firstCompanyId,
+            departmentId: firstDepartmentId,
+            items: createdItems.map((it) => ({
+              saleItemId: it.id,
+              quantityOrdered: Number(it.quantity),
+            })),
+          });
+        }
+      }
+
       const sale = { id: saleId };
       await this.auditService.log({
         userId,
@@ -261,7 +270,7 @@ export class SalesService {
       throw new BadRequestException('Only completed sales can be cancelled');
     }
     return this.prisma.$transaction(async (tx) => {
-      await this.reverseStockForSaleItems(tx, id, sale.items, userId, 'Annulation vente');
+      await this.reverseDeliveredStockForSale(tx, id, userId, 'Annulation vente');
       await tx.financeEntry.deleteMany({ where: { saleId: id } });
       const updated = await tx.sale.update({
         where: { id },
@@ -289,7 +298,7 @@ export class SalesService {
       throw new BadRequestException('Only completed sales can be refunded');
     }
     return this.prisma.$transaction(async (tx) => {
-      await this.reverseStockForSaleItems(tx, id, sale.items, userId, 'Remboursement vente');
+      await this.reverseDeliveredStockForSale(tx, id, userId, 'Remboursement vente');
       await tx.financeEntry.deleteMany({ where: { saleId: id } });
       const updated = await tx.sale.update({
         where: { id },
@@ -326,10 +335,9 @@ export class SalesService {
 
     return this.prisma.$transaction(async (tx) => {
       if (sale.status === 'COMPLETED' && sale.items.length > 0) {
-        await this.reverseStockForSaleItems(
+        await this.reverseDeliveredStockForSale(
           tx,
           saleId,
-          sale.items,
           adminUserId,
           'Suppression vente (admin)',
         );
@@ -360,20 +368,43 @@ export class SalesService {
   }
 
   /**
-   * Ré-entrée stock + mouvement IN (annulation / remboursement), symétrique à la vente.
+   * Ré-entrée stock uniquement pour la part déjà livrée (la sortie se fait à la livraison).
    */
-  private async reverseStockForSaleItems(
+  private async reverseDeliveredStockForSale(
     tx: Prisma.TransactionClient,
     saleId: number,
-    items: Array<{ productId: number; baseQuantity: Prisma.Decimal | string | number }>,
     userId: number | undefined,
     reasonPrefix: string,
   ) {
-    for (const item of items) {
-      const product = await tx.product.findUnique({ where: { id: item.productId } });
-      const baseQty = Number(item.baseQuantity);
-      if (!product) continue;
+    const delivery = await tx.delivery.findUnique({
+      where: { saleId },
+      include: {
+        items: {
+          include: {
+            saleItem: {
+              select: {
+                productId: true,
+                quantity: true,
+                baseQuantity: true,
+                product: { select: { id: true, name: true, trackStock: true, isService: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!delivery) return;
 
+    for (const di of delivery.items) {
+      const deliveredQty = Number(di.quantityDelivered);
+      if (deliveredQty <= 0.0001) continue;
+      const saleQty = Number(di.saleItem.quantity);
+      const baseFull = Number(di.saleItem.baseQuantity);
+      if (saleQty <= 0) continue;
+      const baseQty = (deliveredQty / saleQty) * baseFull;
+      if (baseQty <= 0.0001) continue;
+
+      const product = di.saleItem.product;
       if (product.isService) {
         const recipe = await tx.productRecipe.findUnique({
           where: { parentProductId: product.id },
@@ -397,14 +428,14 @@ export class SalesService {
             });
           }
         }
-      } else if (product.trackStock && !product.isService) {
+      } else if (product.trackStock) {
         await tx.product.update({
-          where: { id: item.productId },
+          where: { id: product.id },
           data: { stock: { increment: baseQty } },
         });
         await tx.stockMovement.create({
           data: {
-            productId: item.productId,
+            productId: product.id,
             quantity: baseQty,
             type: MovementType.IN,
             reason: `${reasonPrefix} #${saleId}`,

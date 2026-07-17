@@ -3,6 +3,7 @@ import type {
   CompanyListItem,
   CompanyProfile,
   CreateSalePayload,
+  Delivery,
   DashboardBalanceSnapshot,
   DashboardSalesByProductRow,
   DashboardSummaryReport,
@@ -16,12 +17,21 @@ import type {
   RevenueReport,
   Sale,
   SessionUser,
+  AppRoleRow,
+  PermissionDefinition,
+  AuditLogRow,
   StockMovementRow,
   InventorySessionDetail,
   InventorySessionListItem,
+  InventoryCountSheet,
+  RegisterListItem,
+  RegisterSessionDetail,
+  RegisterInventoryLinePayload,
+  GlobalStockSnapshot,
   GoodsReceiptListItem,
   ProductRecipeDetail,
   PurchaseOrderListItem,
+  PurchaseOrderDetail,
 } from '../types/api';
 import { resolveApiBaseUrl } from '../config/resolve-api-base-url';
 
@@ -141,6 +151,7 @@ export async function getProducts(departmentId?: number): Promise<Product[]> {
 
 export async function createProduct(payload: {
   name: string;
+  cardColor?: string;
   companyId?: number;
   departmentId?: number;
   sku?: string;
@@ -165,6 +176,7 @@ export async function updateProduct(
   id: number,
   payload: Partial<{
     name: string;
+    cardColor: string | null;
     companyId: number;
     departmentId: number | null;
     sku: string;
@@ -354,8 +366,78 @@ export async function deleteUser(id: number) {
   return data;
 }
 
+export async function listRoles(): Promise<AppRoleRow[]> {
+  const { data } = await api.get<AppRoleRow[]>('/roles');
+  return data;
+}
+
+export async function listPermissions(): Promise<PermissionDefinition[]> {
+  const { data } = await api.get<PermissionDefinition[]>('/roles/permissions');
+  return data;
+}
+
+export async function createRole(payload: {
+  code: string;
+  label: string;
+  description?: string;
+  permissions: string[];
+}) {
+  const { data } = await api.post<AppRoleRow>('/roles', payload);
+  return data;
+}
+
+export async function updateRole(
+  id: number,
+  payload: Partial<{
+    label: string;
+    description: string | null;
+    permissions: string[];
+    isActive: boolean;
+  }>,
+) {
+  const { data } = await api.patch<AppRoleRow>(`/roles/${id}`, payload);
+  return data;
+}
+
+export async function deleteRole(id: number) {
+  const { data } = await api.delete<AppRoleRow>(`/roles/${id}`);
+  return data;
+}
+
 export async function createSale(payload: CreateSalePayload) {
   const { data } = await api.post('/sales', payload);
+  return data;
+}
+
+export async function listDeliveries(params?: {
+  companyId?: number;
+  departmentId?: number;
+  status?: string;
+}): Promise<Delivery[]> {
+  const { data } = await api.get<Delivery[]>('/deliveries', {
+    params: {
+      companyId: params?.companyId,
+      departmentId: params?.departmentId,
+      status: params?.status,
+    },
+  });
+  return data;
+}
+
+export async function getDeliveryById(id: number): Promise<Delivery> {
+  const { data } = await api.get<Delivery>(`/deliveries/${id}`);
+  return data;
+}
+
+export async function updateDelivery(
+  id: number,
+  payload: {
+    items?: Array<{ saleItemId: number; quantityDelivered: number }>;
+    markDelivered?: boolean;
+    note?: string | null;
+  },
+): Promise<Delivery> {
+  const { data } = await api.patch<Delivery>(`/deliveries/${id}`, payload);
   return data;
 }
 
@@ -391,6 +473,18 @@ export async function getSaleById(id: number): Promise<Sale> {
   return data;
 }
 
+/** Annulation (ADMIN / MANAGER) — rétablit le stock déjà livré. */
+export async function cancelSale(saleId: number): Promise<Sale> {
+  const { data } = await api.patch<Sale>(`/sales/${saleId}/cancel`);
+  return data;
+}
+
+/** Remboursement (ADMIN / MANAGER) — rétablit le stock déjà livré. */
+export async function refundSale(saleId: number): Promise<Sale> {
+  const { data } = await api.patch<Sale>(`/sales/${saleId}/refund`);
+  return data;
+}
+
 /** Suppression définitive (API réservée au rôle ADMIN). */
 export async function deleteSalePermanently(saleId: number, companyId: number): Promise<void> {
   await api.delete(`/sales/${saleId}`, {
@@ -414,6 +508,23 @@ export async function getInventoryAlerts(params?: { threshold?: number; companyI
   const { data } = await api.get<{ items: Product[]; total: number }>(
     `/inventory/alerts?threshold=${encodeURIComponent(String(threshold))}${companyId ? `&companyId=${companyId}` : ''}&skip=${skip}&take=${take}`,
   );
+  return data;
+}
+
+export async function listAuditLogs(params?: {
+  skip?: number;
+  take?: number;
+  entity?: string;
+  userId?: number;
+}): Promise<{ items: AuditLogRow[]; total: number }> {
+  const { data } = await api.get<{ items: AuditLogRow[]; total: number }>('/audit', {
+    params: {
+      skip: params?.skip ?? 0,
+      take: params?.take ?? 50,
+      entity: params?.entity,
+      userId: params?.userId,
+    },
+  });
   return data;
 }
 
@@ -451,6 +562,7 @@ export async function stockAdjust(payload: {
 
 export async function createInventorySession(payload: {
   departmentId: number;
+  kind?: 'OPENING' | 'CLOSING' | 'AD_HOC';
   label?: string;
   note?: string;
 }): Promise<InventorySessionDetail> {
@@ -458,17 +570,43 @@ export async function createInventorySession(payload: {
   return data;
 }
 
-export async function listInventorySessions(departmentId?: number): Promise<InventorySessionListItem[]> {
+export async function listInventorySessions(params?: {
+  departmentId?: number;
+  companyId?: number;
+}): Promise<InventorySessionListItem[]> {
   const { data } = await api.get<InventorySessionListItem[]>('/inventory/sessions', {
-    params: departmentId != null ? { departmentId } : undefined,
+    params: {
+      departmentId: params?.departmentId ?? undefined,
+      companyId: params?.companyId ?? undefined,
+    },
   });
   return data;
 }
 
-export async function exportInventorySessionsPdf(params?: { departmentId?: number; take?: number }): Promise<Blob> {
+export async function getInventoryCountSheet(departmentId: number): Promise<InventoryCountSheet> {
+  const { data } = await api.get<InventoryCountSheet>('/inventory/count-sheet', {
+    params: { departmentId },
+  });
+  return data;
+}
+
+export async function exportInventoryCountSheetPdf(departmentId: number): Promise<Blob> {
+  const { data } = await api.get<Blob>('/inventory/count-sheet/export/pdf', {
+    params: { departmentId },
+    responseType: 'blob',
+  });
+  return data;
+}
+
+export async function exportInventorySessionsPdf(params?: {
+  departmentId?: number;
+  companyId?: number;
+  take?: number;
+}): Promise<Blob> {
   const { data } = await api.get<Blob>('/inventory/sessions/export/pdf', {
     params: {
       departmentId: params?.departmentId ?? undefined,
+      companyId: params?.companyId ?? undefined,
       take: params?.take ?? undefined,
     },
     responseType: 'blob',
@@ -500,10 +638,117 @@ export async function cancelInventorySession(id: number) {
   return data;
 }
 
+export async function listRegisters(companyId?: number): Promise<RegisterListItem[]> {
+  const { data } = await api.get<RegisterListItem[]>('/register-sessions/registers', {
+    params: companyId != null ? { companyId } : undefined,
+  });
+  return data;
+}
+
+export async function ensureDefaultRegister(companyId: number): Promise<RegisterListItem> {
+  const { data } = await api.post<RegisterListItem>(
+    `/register-sessions/registers/ensure-default?companyId=${companyId}`,
+  );
+  return data;
+}
+
+export async function getActiveRegisterSession(): Promise<RegisterSessionDetail | null> {
+  const { data } = await api.get<RegisterSessionDetail | null>('/register-sessions/active');
+  return data;
+}
+
+export async function listRegisterSessions(params?: {
+  companyId?: number;
+  registerId?: number;
+  status?: 'OPEN' | 'CLOSED';
+  take?: number;
+}): Promise<RegisterSessionDetail[]> {
+  const { data } = await api.get<RegisterSessionDetail[]>('/register-sessions', {
+    params: {
+      companyId: params?.companyId ?? undefined,
+      registerId: params?.registerId ?? undefined,
+      status: params?.status ?? undefined,
+      take: params?.take ?? undefined,
+    },
+  });
+  return data;
+}
+
+export async function openRegisterSession(payload: {
+  registerId: number;
+  departmentId: number;
+  openingCashAmount?: number;
+  lines: RegisterInventoryLinePayload[];
+}): Promise<RegisterSessionDetail> {
+  const { data } = await api.post<RegisterSessionDetail>('/register-sessions/open', payload);
+  return data;
+}
+
+export async function closeRegisterSession(
+  sessionId: number,
+  payload: {
+    closingCashExpected: number;
+    closingCashCounted: number;
+    lines: RegisterInventoryLinePayload[];
+  },
+): Promise<RegisterSessionDetail> {
+  const { data } = await api.post<RegisterSessionDetail>(
+    `/register-sessions/${sessionId}/close`,
+    payload,
+  );
+  return data;
+}
+
+export async function getGlobalStockSnapshot(params?: {
+  companyIds?: number[];
+  departmentIds?: number[];
+}): Promise<GlobalStockSnapshot> {
+  const { data } = await api.get<GlobalStockSnapshot>('/inventory/global-snapshot', {
+    params: {
+      companyIds: params?.companyIds?.length ? params.companyIds.join(',') : undefined,
+      departmentIds: params?.departmentIds?.length ? params.departmentIds.join(',') : undefined,
+    },
+  });
+  return data;
+}
+
+export async function exportGlobalStockSnapshotPdf(params?: {
+  companyIds?: number[];
+  departmentIds?: number[];
+}): Promise<Blob> {
+  const { data } = await api.get<Blob>('/inventory/global-snapshot/export/pdf', {
+    params: {
+      companyIds: params?.companyIds?.length ? params.companyIds.join(',') : undefined,
+      departmentIds: params?.departmentIds?.length ? params.departmentIds.join(',') : undefined,
+    },
+    responseType: 'blob',
+  });
+  return data;
+}
+
 export async function listPurchaseOrders(companyId?: number): Promise<PurchaseOrderListItem[]> {
   const { data } = await api.get<PurchaseOrderListItem[]>('/purchasing/orders', {
     params: companyId != null ? { companyId } : undefined,
   });
+  return data;
+}
+
+export async function getPurchaseOrder(id: number): Promise<PurchaseOrderDetail> {
+  const { data } = await api.get<PurchaseOrderDetail>(`/purchasing/orders/${id}`);
+  return data;
+}
+
+export async function receivePurchaseOrder(
+  purchaseOrderId: number,
+  payload: {
+    note?: string;
+    lines: Array<{ productId: number; quantity: number; unitCost: number }>;
+  },
+): Promise<PurchaseOrderDetail> {
+  const { data } = await api.post<PurchaseOrderDetail>(
+    `/purchasing/orders/${purchaseOrderId}/receive`,
+    payload,
+  );
   return data;
 }
 
@@ -519,6 +764,15 @@ export async function createPurchaseOrder(payload: {
   return data;
 }
 
+export async function deletePurchaseOrder(id: number): Promise<void> {
+  await api.delete(`/purchasing/orders/${id}`);
+}
+
+export async function deleteGoodsReceipt(id: number): Promise<PurchaseOrderDetail> {
+  const { data } = await api.delete<PurchaseOrderDetail>(`/purchasing/receipts/${id}`);
+  return data;
+}
+
 export async function listGoodsReceipts(departmentId?: number): Promise<GoodsReceiptListItem[]> {
   const { data } = await api.get<GoodsReceiptListItem[]>('/purchasing/receipts', {
     params: departmentId != null ? { departmentId } : undefined,
@@ -528,7 +782,7 @@ export async function listGoodsReceipts(departmentId?: number): Promise<GoodsRec
 
 export async function createGoodsReceipt(payload: {
   departmentId: number;
-  purchaseOrderId?: number;
+  purchaseOrderId: number;
   note?: string;
   lines: Array<{ productId: number; quantity: number; unitCost: number }>;
 }) {
@@ -595,6 +849,15 @@ export async function getFinanceLedger(params: {
   return data;
 }
 
+export async function deleteFinanceLedgerRow(params: {
+  ledgerRowId: string;
+  companyId: number;
+}): Promise<void> {
+  await api.delete(`/finance/ledger/${encodeURIComponent(params.ledgerRowId)}`, {
+    params: { companyId: params.companyId },
+  });
+}
+
 export async function createFinanceEntry(payload: {
   type: 'INCOME' | 'EXPENSE';
   amount: number;
@@ -607,22 +870,27 @@ export async function createFinanceEntry(payload: {
   return data;
 }
 
-export async function getDashboardSummary(params?: { companyId?: number }) {
+export async function getDashboardSummary(params?: { companyId?: number; companyIds?: number[] }) {
   const { data } = await api.get<DashboardSummaryReport>('/reports/dashboard-summary', {
-    params: { companyId: params?.companyId ?? undefined },
+    params: {
+      companyId: params?.companyIds?.length ? undefined : params?.companyId,
+      companyIds: params?.companyIds?.length ? params.companyIds.join(',') : undefined,
+    },
   });
   return data;
 }
 
 export async function getDashboardSummaryRange(params: {
-  companyId: number;
+  companyId?: number;
+  companyIds?: number[];
   dateFrom: string;
   dateTo: string;
   departmentId?: number;
 }) {
   const { data } = await api.get<DashboardBalanceSnapshot>('/reports/dashboard-summary-range', {
     params: {
-      companyId: params.companyId,
+      companyId: params.companyIds?.length ? undefined : params.companyId,
+      companyIds: params.companyIds?.length ? params.companyIds.join(',') : undefined,
       dateFrom: params.dateFrom,
       dateTo: params.dateTo,
       departmentId: params.departmentId,
@@ -632,18 +900,22 @@ export async function getDashboardSummaryRange(params: {
 }
 
 export async function getDashboardSalesByProduct(params: {
-  companyId: number;
+  companyId?: number;
+  companyIds?: number[];
   /** Si dateFrom + dateTo sont fournis, ils priment sur period. */
   period?: 'day' | 'week' | 'month';
   dateFrom?: string;
   dateTo?: string;
   departmentId?: number;
 }) {
+  const companyParams = params.companyIds?.length
+    ? { companyIds: params.companyIds.join(',') }
+    : { companyId: params.companyId };
   const base =
     params.dateFrom && params.dateTo
-      ? { companyId: params.companyId, dateFrom: params.dateFrom, dateTo: params.dateTo }
+      ? { ...companyParams, dateFrom: params.dateFrom, dateTo: params.dateTo }
       : {
-          companyId: params.companyId,
+          ...companyParams,
           period: params.period ?? 'month',
         };
   const { data } = await api.get<DashboardSalesByProductRow[]>('/reports/dashboard-sales-by-product', {
@@ -676,14 +948,16 @@ export async function exportDashboardSalesByProductPdf(params: {
 }
 
 export async function exportFinancialSynthesisPdf(params: {
-  companyId: number;
+  companyId?: number;
+  companyIds?: number[];
   dateFrom: string;
   dateTo: string;
   departmentId?: number;
 }): Promise<Blob> {
   const { data } = await api.get<Blob>('/reports/dashboard-synthesis/export/pdf', {
     params: {
-      companyId: params.companyId,
+      companyId: params.companyIds?.length ? undefined : params.companyId,
+      companyIds: params.companyIds?.length ? params.companyIds.join(',') : undefined,
       dateFrom: params.dateFrom,
       dateTo: params.dateTo,
       departmentId: params.departmentId,

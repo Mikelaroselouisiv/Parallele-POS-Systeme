@@ -12,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { GetUser } from '../../common/decorators/get-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -25,8 +26,11 @@ export class ProductsController {
 
   @Post()
   @Roles('ADMIN', 'MANAGER', 'STOCK_MANAGER')
-  create(@Body() createProductDto: CreateProductDto) {
-    return this.productsService.create(createProductDto);
+  create(
+    @Body() createProductDto: CreateProductDto,
+    @GetUser() user?: { id?: number },
+  ) {
+    return this.productsService.create(createProductDto, user?.id);
   }
 
   @Get()
@@ -47,13 +51,17 @@ export class ProductsController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateProductDto: UpdateProductDto,
+    @GetUser() user?: { id?: number },
   ) {
-    return this.productsService.update(id, updateProductDto);
+    return this.productsService.update(id, updateProductDto, user?.id);
   }
 
   @Delete(':id')
   @Roles('ADMIN', 'MANAGER', 'STOCK_MANAGER')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.productsService.remove(id);
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @GetUser() user?: { id?: number },
+  ) {
+    return this.productsService.remove(id, user?.id);
   }
 }

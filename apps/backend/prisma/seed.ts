@@ -1,5 +1,5 @@
 import * as bcrypt from 'bcrypt';
-import { PrismaClient, Role } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -24,7 +24,7 @@ async function main() {
 
   const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 10);
   const firstAdmin = await prisma.user.findFirst({
-    where: { role: Role.ADMIN },
+    where: { role: 'ADMIN' },
     orderBy: { id: 'asc' },
   });
 
@@ -34,7 +34,7 @@ async function main() {
         phone: ADMIN_PHONE,
         email: 'admin@pos.local',
         password: passwordHash,
-        role: Role.ADMIN,
+        role: 'ADMIN',
       },
     });
     console.log(`Seed (FORCE_ADMIN_RESET): admin créé — ${ADMIN_PHONE} / ${ADMIN_PASSWORD}`);

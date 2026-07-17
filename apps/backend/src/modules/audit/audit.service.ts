@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { USER_ATTRIBUTION_SELECT } from '../../common/user-attribution';
 
 type AuditInput = {
   userId?: number;
@@ -27,5 +29,28 @@ export class AuditService {
     } catch (err) {
       console.error('[AuditService] log failed:', err);
     }
+  }
+
+  async list(opts?: { skip?: number; take?: number; entity?: string; userId?: number }) {
+    const skip = Math.max(0, Math.floor(opts?.skip ?? 0));
+    const take = Math.min(200, Math.max(1, Math.floor(opts?.take ?? 50)));
+    const where: Prisma.AuditLogWhereInput = {};
+    if (opts?.entity?.trim()) {
+      where.entity = opts.entity.trim();
+    }
+    if (opts?.userId != null && Number.isFinite(opts.userId)) {
+      where.userId = opts.userId;
+    }
+    const [items, total] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where,
+        include: { user: { select: USER_ATTRIBUTION_SELECT } },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+    return { items, total };
   }
 }

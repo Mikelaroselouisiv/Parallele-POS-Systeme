@@ -7,6 +7,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -71,6 +72,12 @@ export class CreateProductDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  /** Couleur de la carte produit à la caisse (#RRGGBB). */
+  @IsOptional()
+  @IsString()
+  @Matches(/^#[0-9A-Fa-f]{6}$/)
+  cardColor?: string;
 
   @IsOptional()
   @Type(() => Boolean)

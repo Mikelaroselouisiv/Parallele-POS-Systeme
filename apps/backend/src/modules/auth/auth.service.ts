@@ -1,10 +1,10 @@
 import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import { Role } from '@prisma/client';
 import { normalizePhone } from '../../common/utils/phone';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { RolesService } from '../roles/roles.service';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -17,6 +17,7 @@ export class AuthService {
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
     private readonly auditService: AuditService,
+    private readonly rolesService: RolesService,
   ) {}
 
   /** True tant qu’aucun utilisateur n’existe (première installation). */
@@ -39,7 +40,7 @@ export class AuthService {
     const user = await this.usersService.create({
       phone: registerDto.phone,
       password: registerDto.password,
-      role: Role.ADMIN,
+      role: 'ADMIN',
       email: registerDto.email?.trim() || undefined,
       fullName: registerDto.fullName?.trim() || undefined,
     });
@@ -101,7 +102,16 @@ export class AuthService {
   }
 
   async me(userId: number) {
-    return this.usersService.findOne(userId);
+    const user = await this.usersService.findOne(userId);
+    const roleRow = await this.prisma.appRole.findFirst({
+      where: { code: user.role, deletedAt: null },
+      select: { label: true, permissions: true },
+    });
+    return {
+      ...user,
+      roleLabel: roleRow?.label ?? user.role,
+      permissions: roleRow?.permissions ?? [],
+    };
   }
 
   async refresh(dto: RefreshTokenDto) {

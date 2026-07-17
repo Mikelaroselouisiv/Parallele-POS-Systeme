@@ -1,0 +1,36 @@
+const AUDIT_ACTION_LABELS: Record<string, string> = {
+  LOGIN: 'Connexion',
+  REGISTER: 'Inscription',
+  TOKEN_REFRESH: 'Session renouvelée',
+  USER_CREATED: 'Utilisateur créé',
+  USER_UPDATED: 'Utilisateur modifié',
+  USER_DELETED: 'Utilisateur supprimé',
+  PRODUCT_CREATED: 'Produit créé',
+  PRODUCT_UPDATED: 'Produit modifié',
+  PRODUCT_DELETED: 'Produit supprimé',
+  STOCK_IN: 'Entrée stock',
+  STOCK_OUT: 'Sortie stock',
+  STOCK_ADJUST: 'Ajustement stock',
+  INVENTORY_SESSION_CREATED: 'Inventaire ouvert',
+  INVENTORY_LINE_UPDATED: 'Ligne inventaire',
+  INVENTORY_SESSION_COMPLETED: 'Inventaire validé',
+  INVENTORY_SESSION_CANCELLED: 'Inventaire annulé',
+  PURCHASE_ORDER_CREATED: 'Commande créée',
+  PURCHASE_ORDER_DELETED: 'Commande supprimée',
+  GOODS_RECEIPT_POSTED: 'Réception validée',
+  GOODS_RECEIPT_DELETED: 'Réception supprimée',
+  SALE_CREATED: 'Vente enregistrée',
+  DELIVERY_UPDATED: 'Livraison mise à jour',
+  SALE_CANCELLED: 'Vente annulée',
+  SALE_REFUNDED: 'Vente remboursée',
+  SALE_DELETED_PERMANENTLY: 'Vente supprimée',
+  FINANCE_ENTRY_CREATED: 'Écriture finance',
+  FINANCE_ENTRY_DELETED: 'Écriture finance supprimée',
+  CASH_CLOSURE_CREATED: 'Clôture caisse',
+  REGISTER_SESSION_OPENED: 'Caisse ouverte',
+  REGISTER_SESSION_CLOSED: 'Caisse fermée',
+};
+
+export function auditActionLabel(action: string): string {
+  return AUDIT_ACTION_LABELS[action] ?? action;
+}

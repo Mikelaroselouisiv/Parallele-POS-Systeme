@@ -7,7 +7,9 @@ const RASTER_DOTS_80 = 576;
 const ESC_ALIGN_LEFT = Buffer.from([0x1b, 0x61, 0x00]);
 
 function formatMoney(value) {
-  return Number(value).toFixed(2);
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return `${n.toFixed(2)} HTG`;
 }
 
 function clipLine(text, lineWidth) {

@@ -3,6 +3,8 @@ import { useState } from 'react';
 import type { CompanyProfile, DepartmentPrinterSettings, Sale } from '../types/api';
 import { exportSalePdf } from '../services/api';
 import { buildReceiptPayloadFromSale } from '../utils/receiptPayload';
+import { formatMoney } from '../utils/currency';
+import { formatQuantity } from '../utils/formatQuantity';
 import { buildSaleDetailPrintHtml, openBrowserPrintWindow } from '../utils/saleReceiptBrowserHtml';
 
 function formatApiError(err: unknown, fallback: string): string {
@@ -40,17 +42,38 @@ function paymentMethodLabel(method: string): string {
   }
 }
 
+function saleStatusLabel(status: Sale['status']): string {
+  switch (status) {
+    case 'COMPLETED':
+      return 'Complétée';
+    case 'CANCELLED':
+      return 'Annulée';
+    case 'REFUNDED':
+      return 'Remboursée';
+    default:
+      return status;
+  }
+}
+
 export function SaleDetailModal({
   sale,
   companyName,
   company,
   printer,
+  canCancelOrRefund = false,
+  actionBusy = false,
+  onCancelSale,
+  onRefundSale,
   onClose,
 }: {
   sale: Sale | null;
   companyName?: string;
   company: CompanyProfile | null;
   printer: DepartmentPrinterSettings | null;
+  canCancelOrRefund?: boolean;
+  actionBusy?: boolean;
+  onCancelSale?: (sale: Sale) => void | Promise<void>;
+  onRefundSale?: (sale: Sale) => void | Promise<void>;
   onClose: () => void;
 }) {
   const [receiptBusy, setReceiptBusy] = useState(false);
@@ -59,6 +82,9 @@ export function SaleDetailModal({
   if (!sale) return null;
 
   const hasElectronPrint = typeof window.desktopApp?.printReceipt === 'function';
+  const busy = receiptBusy || actionBusy;
+  const showFinanceActions =
+    canCancelOrRefund && sale.status === 'COMPLETED' && (onCancelSale || onRefundSale);
 
   async function printThermalReceipt() {
     if (!sale) return;
@@ -133,7 +159,7 @@ export function SaleDetailModal({
             {sale.user?.fullName?.trim() || sale.cashier || sale.user?.phone || '—'}
           </p>
           <p style={{ margin: 0 }}>
-            <strong>Statut</strong> : {sale.status}
+            <strong>Statut</strong> : {saleStatusLabel(sale.status)}
           </p>
         </div>
 
@@ -143,17 +169,17 @@ export function SaleDetailModal({
               <tr>
                 <th>Article</th>
                 <th>Qté</th>
-                <th>P.U.</th>
-                <th>Sous-total</th>
+                <th>P.U. (HTG)</th>
+                <th>Sous-total (HTG)</th>
               </tr>
             </thead>
             <tbody>
               {(sale.items ?? []).map((it, idx) => (
                 <tr key={idx}>
                   <td>{it.lineLabel ?? it.product?.name ?? '—'}</td>
-                  <td>{Number(it.quantity).toFixed(3)}</td>
-                  <td>{Number(it.unitPrice).toFixed(2)}</td>
-                  <td>{Number(it.subtotal).toFixed(2)}</td>
+                  <td>{formatQuantity(Number(it.quantity))}</td>
+                  <td className="journal-amt">{formatMoney(it.unitPrice)}</td>
+                  <td className="journal-amt">{formatMoney(it.subtotal)}</td>
                 </tr>
               ))}
             </tbody>
@@ -161,7 +187,7 @@ export function SaleDetailModal({
         </div>
 
         <p style={{ margin: '0.75rem 0 0', fontWeight: 800 }}>
-          Total : {Number(sale.total).toFixed(2)}
+          Total : {formatMoney(sale.total)}
         </p>
 
         {sale.payments && sale.payments.length > 0 ? (
@@ -171,7 +197,7 @@ export function SaleDetailModal({
               {sale.payments.map((p, i) => (
                 <li key={p.id ?? i} className="simple-list-row">
                   <span>{paymentMethodLabel(String(p.method))}</span>
-                  <span>{Number(p.amount).toFixed(2)}</span>
+                  <span>{formatMoney(p.amount)}</span>
                 </li>
               ))}
             </ul>
@@ -184,18 +210,43 @@ export function SaleDetailModal({
           </p>
         ) : null}
 
+        {showFinanceActions ? (
+          <div className="sale-finance-actions">
+            {onCancelSale ? (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={busy}
+                onClick={() => void onCancelSale(sale)}
+              >
+                Annuler la vente
+              </button>
+            ) : null}
+            {onRefundSale ? (
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={busy}
+                onClick={() => void onRefundSale(sale)}
+              >
+                Rembourser
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         <div
           className="modal-actions"
           style={{ marginTop: '0.75rem', flexWrap: 'wrap', gap: '0.5rem', justifyContent: 'flex-end' }}
         >
-          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={receiptBusy}>
+          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>
             Fermer
           </button>
           <button
             type="button"
             className="btn btn-secondary"
             onClick={() => void printThermalReceipt()}
-            disabled={receiptBusy}
+            disabled={busy}
           >
             {receiptBusy ? 'Patientez…' : 'Imprimer (ticket caisse)'}
           </button>
@@ -203,7 +254,7 @@ export function SaleDetailModal({
             type="button"
             className="btn btn-primary"
             onClick={() => void exportPdf()}
-            disabled={receiptBusy}
+            disabled={busy}
           >
             {receiptBusy ? 'Patientez…' : 'Exporter en PDF'}
           </button>

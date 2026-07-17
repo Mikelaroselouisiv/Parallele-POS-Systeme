@@ -7,14 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum Role {
-  ADMIN
-  MANAGER
-  CASHIER
-  STOCK_MANAGER
-  ACCOUNTANT
-}
-
 enum SaleStatus {
   COMPLETED
   CANCELLED
@@ -45,6 +37,17 @@ enum InventorySessionStatus {
   CANCELLED
 }
 
+enum InventorySessionKind {
+  OPENING
+  CLOSING
+  AD_HOC
+}
+
+enum RegisterSessionStatus {
+  OPEN
+  CLOSED
+}
+
 enum PurchaseOrderStatus {
   DRAFT
   ORDERED
@@ -55,6 +58,12 @@ enum PurchaseOrderStatus {
 enum GoodsReceiptStatus {
   DRAFT
   POSTED
+}
+
+enum DeliveryStatus {
+  PENDING
+  PARTIAL
+  DELIVERED
 }
 
 /// Direction / curseur de sync (métronome local ↔ GCP).
@@ -77,7 +86,7 @@ model Company {
   presentationText String?
   logoUrl          String?
   taxId            String?
-  currency         String   @default("XOF")
+  currency         String   @default("HTG")
   vatRatePercent   Decimal  @default(0) @db.Decimal(5, 2)
   departments      Department[]
   stores           Store[]
@@ -85,6 +94,7 @@ model Company {
   users            User[]
   expenseCategories ExpenseCategory[]
   purchaseOrders   PurchaseOrder[]
+  deliveries       Delivery[]
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   deletedAt        DateTime?
@@ -119,8 +129,10 @@ model Department {
   packagingUnits PackagingUnit[]
   printerProfile DepartmentPrinterProfile?
   inventorySessions InventorySession[]
+  registerSessions  RegisterSession[]
   purchaseOrders    PurchaseOrder[]
   goodsReceipts     GoodsReceipt[]
+  deliveries        Delivery[]
   createdAt      DateTime                  @default(now())
   updatedAt      DateTime                  @updatedAt
   deletedAt      DateTime?
@@ -168,9 +180,38 @@ model Register {
   storeId   Int
   store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
   sales     Sale[]
+  sessions  RegisterSession[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   deletedAt DateTime?
+}
+
+/// Session de travail caisse : ouverture (inventaire + fond) → ventes → fermeture (inventaire + espèces).
+model RegisterSession {
+  id                        Int                   @id @default(autoincrement())
+  uuid                      String                @unique @default(uuid())
+  registerId                Int
+  register                  Register              @relation(fields: [registerId], references: [id], onDelete: Cascade)
+  departmentId              Int
+  department                Department            @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  status                    RegisterSessionStatus @default(OPEN)
+  openedById                Int
+  openedBy                  User                  @relation("RegisterSessionOpenedBy", fields: [openedById], references: [id], onDelete: Restrict)
+  openedAt                  DateTime              @default(now())
+  closedById                Int?
+  closedBy                  User?                 @relation("RegisterSessionClosedBy", fields: [closedById], references: [id], onDelete: SetNull)
+  closedAt                  DateTime?
+  openingCashAmount         Decimal?              @db.Decimal(12, 2)
+  closingCashExpected       Decimal?              @db.Decimal(12, 2)
+  closingCashCounted        Decimal?              @db.Decimal(12, 2)
+  cashVariance              Decimal?              @db.Decimal(12, 2)
+  openingInventorySessionId Int                   @unique
+  openingInventorySession   InventorySession      @relation("RegisterOpeningInventory", fields: [openingInventorySessionId], references: [id], onDelete: Restrict)
+  closingInventorySessionId Int?                  @unique
+  closingInventorySession   InventorySession?     @relation("RegisterClosingInventory", fields: [closingInventorySessionId], references: [id], onDelete: SetNull)
+  createdAt                 DateTime              @default(now())
+  updatedAt                 DateTime              @updatedAt
+  deletedAt                 DateTime?
 }
 
 model Product {
@@ -183,7 +224,12 @@ model Product {
   sku          String?
   barcode      String?
   name         String
+  cardColor    String?
   description  String?
+  createdById  Int?
+  updatedById  Int?
+  createdBy    User?             @relation("ProductCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy    User?             @relation("ProductUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   isService    Boolean           @default(false)
   trackStock   Boolean           @default(true)
   cost         Decimal           @default(0) @db.Decimal(12, 2)
@@ -260,6 +306,7 @@ model Sale {
   register   Register?   @relation(fields: [registerId], references: [id])
   /// Ligne de journal (encaissement) liée à cette vente — une entrée INCOME par vente POS.
   financeEntry FinanceEntry?
+  delivery   Delivery?
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
   deletedAt  DateTime?
@@ -279,9 +326,49 @@ model SaleItem {
   sale              Sale             @relation(fields: [saleId], references: [id], onDelete: Cascade)
   product           Product          @relation(fields: [productId], references: [id])
   productSaleUnit   ProductSaleUnit? @relation(fields: [productSaleUnitId], references: [id])
+  deliveryItem      DeliveryItem?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
   deletedAt         DateTime?
+}
+
+/// Suivi de livraison d’une vente (fiche) — une livraison par vente complétée.
+model Delivery {
+  id            Int            @id @default(autoincrement())
+  uuid          String         @unique @default(uuid())
+  saleId        Int            @unique
+  sale          Sale           @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  companyId     Int
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  departmentId  Int?
+  department    Department?    @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  status        DeliveryStatus @default(PENDING)
+  note          String?
+  deliveredAt   DateTime?
+  deliveredById Int?
+  deliveredBy   User?          @relation("DeliveryDeliveredBy", fields: [deliveredById], references: [id], onDelete: SetNull)
+  items         DeliveryItem[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  deletedAt     DateTime?
+
+  @@index([companyId, departmentId, status])
+  @@index([status, createdAt])
+}
+
+model DeliveryItem {
+  id                Int      @id @default(autoincrement())
+  uuid              String   @unique @default(uuid())
+  deliveryId        Int
+  delivery          Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  saleItemId        Int      @unique
+  saleItem          SaleItem @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
+  quantityOrdered   Decimal  @db.Decimal(12, 4)
+  quantityDelivered Decimal  @default(0) @db.Decimal(12, 4)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([deliveryId])
 }
 
 model Payment {
@@ -323,13 +410,20 @@ model InventorySession {
   departmentId   Int
   department     Department             @relation(fields: [departmentId], references: [id], onDelete: Cascade)
   status         InventorySessionStatus @default(DRAFT)
+  kind           InventorySessionKind   @default(AD_HOC)
   label          String?
   note           String?
   createdById    Int?
-  createdBy      User?                  @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy      User?                  @relation("InventorySessionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  completedById  Int?
+  completedBy    User?                  @relation("InventorySessionCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+  cancelledById  Int?
+  cancelledBy    User?                  @relation("InventorySessionCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
   completedAt    DateTime?
   lines          InventoryLine[]
   stockMovements StockMovement[]
+  registerSessionOpening RegisterSession? @relation("RegisterOpeningInventory")
+  registerSessionClosing RegisterSession? @relation("RegisterClosingInventory")
   createdAt      DateTime               @default(now())
   updatedAt      DateTime               @updatedAt
   deletedAt      DateTime?
@@ -498,13 +592,27 @@ model CashClosure {
   deletedAt      DateTime?
 }
 
+model AppRole {
+  id          Int       @id @default(autoincrement())
+  uuid        String    @unique @default(uuid())
+  code        String    @unique
+  label       String
+  description String?
+  permissions String[]
+  isSystem    Boolean   @default(false)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+}
+
 model User {
   id           Int            @id @default(autoincrement())
   uuid         String         @unique @default(uuid())
   email        String?
   phone        String         @unique
   password     String
-  role         Role           @default(CASHIER)
+  role         String         @default("CASHIER")
   fullName     String?
   isActive     Boolean        @default(true)
   companyId    Int?
@@ -515,11 +623,18 @@ model User {
   sessions     Session[]
   auditLogs    AuditLog[]
   stockMoves   StockMovement[] @relation("StockMovementCreatedBy")
-  inventorySessions InventorySession[]
+  inventorySessionsCreated InventorySession[] @relation("InventorySessionCreatedBy")
+  inventorySessionsCompleted InventorySession[] @relation("InventorySessionCompletedBy")
+  inventorySessionsCancelled InventorySession[] @relation("InventorySessionCancelledBy")
+  productsCreated Product[] @relation("ProductCreatedBy")
+  productsUpdated Product[] @relation("ProductUpdatedBy")
   purchaseOrdersCreated PurchaseOrder[] @relation("PurchaseOrderCreatedBy")
   goodsReceiptsCreated  GoodsReceipt[] @relation("GoodsReceiptCreatedBy")
   financeEntries FinanceEntry[] @relation("FinanceEntryUser")
   cashClosures CashClosure[] @relation("CashClosureCreatedBy")
+  registerSessionsOpened RegisterSession[] @relation("RegisterSessionOpenedBy")
+  registerSessionsClosed RegisterSession[] @relation("RegisterSessionClosedBy")
+  deliveriesDelivered Delivery[] @relation("DeliveryDeliveredBy")
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
   deletedAt    DateTime?

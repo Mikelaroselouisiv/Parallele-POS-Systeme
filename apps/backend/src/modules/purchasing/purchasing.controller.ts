@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -12,7 +13,7 @@ import { GetUser } from '../../common/decorators/get-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import { CreateGoodsReceiptDto, CreatePurchaseOrderDto } from './dto/purchasing.dto';
+import { CreateGoodsReceiptDto, CreatePurchaseOrderDto, ReceivePurchaseOrderDto } from './dto/purchasing.dto';
 import { PurchasingService } from './purchasing.service';
 
 @Controller('purchasing')
@@ -42,6 +43,16 @@ export class PurchasingController {
   @Roles('ADMIN', 'MANAGER', 'STOCK_MANAGER')
   getOrder(@Param('id', ParseIntPipe) id: number) {
     return this.purchasingService.getPurchaseOrder(id);
+  }
+
+  @Post('orders/:id/receive')
+  @Roles('ADMIN', 'MANAGER', 'STOCK_MANAGER')
+  receiveOrder(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ReceivePurchaseOrderDto,
+    @GetUser() user?: { id?: number },
+  ) {
+    return this.purchasingService.receivePurchaseOrder(id, dto, user?.id);
   }
 
   @Post('receipts')
@@ -75,5 +86,23 @@ export class PurchasingController {
     @GetUser() user?: { id?: number },
   ) {
     return this.purchasingService.postGoodsReceipt(id, user?.id);
+  }
+
+  @Delete('orders/:id')
+  @Roles('ADMIN')
+  deleteOrder(
+    @Param('id', ParseIntPipe) id: number,
+    @GetUser() user?: { id?: number },
+  ) {
+    return this.purchasingService.deletePurchaseOrder(id, user?.id);
+  }
+
+  @Delete('receipts/:id')
+  @Roles('ADMIN')
+  deleteReceipt(
+    @Param('id', ParseIntPipe) id: number,
+    @GetUser() user?: { id?: number },
+  ) {
+    return this.purchasingService.deleteGoodsReceipt(id, user?.id);
   }
 }

@@ -1,4 +1,5 @@
 import type { Product } from '../types/api';
+import { formatMoney } from '../utils/currency';
 
 interface ProductListProps {
   products: Product[];
@@ -29,7 +30,7 @@ export function ProductList({ products, onAddToCart, loading }: ProductListProps
                   <p>Stock: {stock}</p>
                 </div>
                 <div className="product-right">
-                  <strong>{price.toFixed(2)}</strong>
+                  <strong>{formatMoney(price)}</strong>
                   <button
                     type="button"
                     disabled={stock <= 0 && product.trackStock}

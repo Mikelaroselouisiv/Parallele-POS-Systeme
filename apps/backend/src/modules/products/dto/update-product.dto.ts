@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Min,
   ValidateIf,
   ValidateNested,
@@ -38,6 +39,13 @@ export class UpdateProductDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  /** Couleur de la carte produit à la caisse (#RRGGBB). null = retirer la couleur. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @Matches(/^#[0-9A-Fa-f]{6}$/)
+  cardColor?: string | null;
 
   @IsOptional()
   @Type(() => Boolean)

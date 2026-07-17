@@ -73,7 +73,7 @@ export class CompanyService {
         presentationText: dto.presentationText,
         logoUrl: dto.logoUrl?.trim(),
         taxId: dto.taxId?.trim(),
-        currency: dto.currency?.trim() ?? 'XOF',
+        currency: dto.currency?.trim() ?? 'HTG',
         vatRatePercent: dto.vatRatePercent ?? 0,
       },
       include: companyListInclude,

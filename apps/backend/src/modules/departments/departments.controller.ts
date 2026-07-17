@@ -24,7 +24,7 @@ export class DepartmentsController {
   constructor(private readonly departmentsService: DepartmentsService) {}
 
   @Get()
-  @Roles('ADMIN', 'MANAGER', 'STOCK_MANAGER', 'ACCOUNTANT')
+  @Roles('ADMIN', 'MANAGER', 'STOCK_MANAGER', 'ACCOUNTANT', 'CASHIER', 'LIVREUR')
   findAll(@Query('companyId') companyIdRaw?: string) {
     if (companyIdRaw === undefined || companyIdRaw === '') {
       return this.departmentsService.findAll();

@@ -35,6 +35,8 @@ export const ENTITY_FK_MAP: Partial<Record<SyncEntityName, SyncFkRef[]>> = {
   Product: [
     { uuidField: 'companyUuid', idField: 'companyId', parent: 'Company', required: true },
     { uuidField: 'departmentUuid', idField: 'departmentId', parent: 'Department', required: false },
+    { uuidField: 'createdByUuid', idField: 'createdById', parent: 'User', required: false },
+    { uuidField: 'updatedByUuid', idField: 'updatedById', parent: 'User', required: false },
   ],
   ProductSaleUnit: [
     { uuidField: 'productUuid', idField: 'productId', parent: 'Product', required: true },
@@ -109,6 +111,8 @@ export const ENTITY_FK_MAP: Partial<Record<SyncEntityName, SyncFkRef[]>> = {
   InventorySession: [
     { uuidField: 'departmentUuid', idField: 'departmentId', parent: 'Department', required: true },
     { uuidField: 'createdByUuid', idField: 'createdById', parent: 'User', required: false },
+    { uuidField: 'completedByUuid', idField: 'completedById', parent: 'User', required: false },
+    { uuidField: 'cancelledByUuid', idField: 'cancelledById', parent: 'User', required: false },
   ],
   InventoryLine: [
     {

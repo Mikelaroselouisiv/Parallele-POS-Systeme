@@ -1,4 +1,5 @@
 import type { Product } from '../types/api';
+import { formatMoney } from '../utils/currency';
 
 export interface CartItem {
   productId: number;
@@ -37,7 +38,7 @@ export function CartPanel({
             <div className="cart-item" key={item.productId}>
               <div>
                 <strong>{item.name}</strong>
-                <p>{item.unitPrice.toFixed(2)} €</p>
+                <p>{formatMoney(item.unitPrice)}</p>
               </div>
               <div className="cart-actions">
                 <button type="button" onClick={() => onDecrease(item.productId)}>
@@ -57,7 +58,7 @@ export function CartPanel({
             </div>
           ))}
           <div className="cart-total">
-            <strong>Total: {total.toFixed(2)} €</strong>
+            <strong>Total : {formatMoney(total)}</strong>
             <button type="button" onClick={onCheckout} disabled={loading}>
               {loading ? 'Validation...' : 'Valider vente'}
             </button>

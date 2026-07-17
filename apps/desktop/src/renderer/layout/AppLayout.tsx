@@ -3,17 +3,18 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { BrandLogo } from '../components/BrandLogo';
 import { useAuth } from '../context/AuthContext';
 import { pendingSalesCount, syncSalesQueue } from '../services/offline-queue';
-import type { UserRole } from '../types/api';
+import { formatRoleLabel } from '../utils/roleLabels';
 
-const nav: Array<{ to: string; label: string; roles: UserRole[] }> = [
-  { to: '/app/dashboard', label: 'Tableau de bord', roles: ['ADMIN'] },
-  { to: '/app/stock', label: 'Stock & produits', roles: ['ADMIN', 'MANAGER', 'STOCK_MANAGER'] },
-  { to: '/app/pos', label: 'Caisse (POS)', roles: ['ADMIN', 'MANAGER', 'CASHIER'] },
-  { to: '/app/config', label: 'Configuration', roles: ['ADMIN', 'MANAGER'] },
+const nav: Array<{ to: string; label: string; permission: string }> = [
+  { to: '/app/pos', label: 'Caisse (POS)', permission: 'pos.use' },
+  { to: '/app/livraisons', label: 'Livraisons', permission: 'deliveries.view' },
+  { to: '/app/dashboard', label: 'Tableau de bord', permission: 'dashboard.view' },
+  { to: '/app/stock', label: 'Stocks', permission: 'stock.view' },
+  { to: '/app/config', label: 'Configuration', permission: 'config.view' },
 ];
 
 export function AppLayout() {
-  const { user, logout, can } = useAuth();
+  const { user, logout, canPerm } = useAuth();
   const navigate = useNavigate();
   const [pendingSales, setPendingSales] = useState(0);
   const syncRunning = useRef(false);
@@ -62,7 +63,7 @@ export function AppLayout() {
     };
   }, [syncPendingSales]);
 
-  const visible = nav.filter((item) => can(item.roles));
+  const visible = nav.filter((item) => canPerm(item.permission));
 
   return (
     <div className="app-shell">
@@ -90,7 +91,7 @@ export function AppLayout() {
         <div className="app-sidebar-footer">
           <div className="app-user">
             <div className="app-user-email">{user?.phone}</div>
-            <div className="app-user-role">{user?.role}</div>
+            <div className="app-user-role">{formatRoleLabel(user?.role, user?.roleLabel)}</div>
           </div>
           <button
             type="button"

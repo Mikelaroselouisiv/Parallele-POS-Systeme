@@ -32,6 +32,7 @@ type AuthContextValue = {
   logout: () => void;
   refreshUser: () => Promise<void>;
   can: (roles: UserRole[]) => boolean;
+  canPerm: (permission: string) => boolean;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -115,14 +116,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const can = useCallback(
     (roles: UserRole[]) => {
       if (!user) return false;
-      return roles.includes(user.role);
+      if (roles.includes(user.role)) return true;
+      const perms = user.permissions ?? [];
+      if (perms.includes('*')) return true;
+      return false;
+    },
+    [user],
+  );
+
+  const canPerm = useCallback(
+    (permission: string) => {
+      if (!user?.permissions) return false;
+      if (user.permissions.includes('*')) return true;
+      return user.permissions.includes(permission);
     },
     [user],
   );
 
   const value = useMemo(
-    () => ({ user, loading, login, registerFirstAdmin, logout, refreshUser, can }),
-    [user, loading, login, registerFirstAdmin, logout, refreshUser, can],
+    () => ({ user, loading, login, registerFirstAdmin, logout, refreshUser, can, canPerm }),
+    [user, loading, login, registerFirstAdmin, logout, refreshUser, can, canPerm],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

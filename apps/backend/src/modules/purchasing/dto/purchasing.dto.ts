@@ -81,12 +81,23 @@ export class CreateGoodsReceiptDto {
   @Min(1)
   departmentId: number;
 
-  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  purchaseOrderId?: number;
+  purchaseOrderId: number;
 
+  @IsOptional()
+  @IsString()
+  note?: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => GoodsReceiptLineDto)
+  lines: GoodsReceiptLineDto[];
+}
+
+export class ReceivePurchaseOrderDto {
   @IsOptional()
   @IsString()
   note?: string;
