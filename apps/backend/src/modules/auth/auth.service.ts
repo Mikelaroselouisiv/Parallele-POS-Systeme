@@ -55,7 +55,7 @@ export class AuthService {
       entity: 'USER',
       entityId: String(user.id),
     });
-    return { user, ...tokens };
+    return { user: await this.toSessionUser(user), ...tokens };
   }
 
   async login(loginDto: LoginDto) {
@@ -87,31 +87,13 @@ export class AuthService {
     });
     return {
       ...tokens,
-      user: {
-        id: user.id,
-        phone: user.phone,
-        email: user.email,
-        role: user.role,
-        fullName: user.fullName,
-        isActive: user.isActive,
-        companyId: user.companyId,
-        departmentId: user.departmentId,
-        createdAt: user.createdAt,
-      },
+      user: await this.toSessionUser(user),
     };
   }
 
   async me(userId: number) {
     const user = await this.usersService.findOne(userId);
-    const roleRow = await this.prisma.appRole.findFirst({
-      where: { code: user.role, deletedAt: null },
-      select: { label: true, permissions: true },
-    });
-    return {
-      ...user,
-      roleLabel: roleRow?.label ?? user.role,
-      permissions: roleRow?.permissions ?? [],
-    };
+    return this.toSessionUser(user);
   }
 
   async refresh(dto: RefreshTokenDto) {
@@ -160,6 +142,42 @@ export class AuthService {
       throw new UnauthorizedException('Compte sans numéro de téléphone');
     }
     return v;
+  }
+
+  /** Session utilisateur complète (permissions incluses) — login / register / me. */
+  private async toSessionUser(user: {
+    id: number;
+    phone: string | null;
+    email?: string | null;
+    role: string;
+    fullName?: string | null;
+    isActive?: boolean;
+    companyId?: number | null;
+    departmentId?: number | null;
+    createdAt?: Date;
+  }) {
+    const roleRow = await this.prisma.appRole.findFirst({
+      where: { code: user.role, deletedAt: null, isActive: true },
+      select: { label: true, permissions: true },
+    });
+    let permissions = roleRow?.permissions ?? [];
+    // Filet de sécurité : un ADMIN système sans ligne AppRole garde l’accès complet.
+    if ((!permissions || permissions.length === 0) && user.role === 'ADMIN') {
+      permissions = ['*'];
+    }
+    return {
+      id: user.id,
+      phone: user.phone,
+      email: user.email ?? null,
+      role: user.role,
+      roleLabel: roleRow?.label ?? user.role,
+      permissions,
+      fullName: user.fullName ?? null,
+      isActive: user.isActive ?? true,
+      companyId: user.companyId ?? null,
+      departmentId: user.departmentId ?? null,
+      createdAt: user.createdAt,
+    };
   }
 
   private async createSessionTokens(userId: number, phone: string, role: string) {

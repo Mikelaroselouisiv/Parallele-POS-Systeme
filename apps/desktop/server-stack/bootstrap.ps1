@@ -157,8 +157,13 @@ function Register-ScheduledTask {
 
 if (Test-Path -LiteralPath $StateFile) {
   if (Test-DockerReady) {
+    Import-BundledImages
     Push-Location $StackDir
-    try { docker compose -f $ComposeFile --env-file $EnvFile up -d 2>$null | Out-Null } finally { Pop-Location }
+    try {
+      docker compose -f $ComposeFile --env-file $EnvFile up -d 2>$null | Out-Null
+    } finally {
+      Pop-Location
+    }
   }
   exit 0
 }

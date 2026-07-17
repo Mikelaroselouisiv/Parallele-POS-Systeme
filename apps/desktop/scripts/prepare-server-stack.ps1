@@ -46,6 +46,12 @@ docker tag $BackendImage $BackendBundle
 docker save -o (Join-Path $ImagesDir 'backend.tar') $BackendBundle
 Write-Host 'backend.tar exporté'
 
+Write-Host 'Pull postgres:16 (offline machine mère)...'
+docker pull postgres:16
+if ($LASTEXITCODE -ne 0) { throw 'docker pull postgres:16 a échoué' }
+docker save -o (Join-Path $ImagesDir 'postgres.tar') postgres:16
+Write-Host 'postgres.tar exporté'
+
 Write-Host 'Build sync-agent...'
 docker build -t $SyncAgentBundle $SyncAgentContext
 if ($LASTEXITCODE -ne 0) { throw 'docker build sync-agent a échoué' }

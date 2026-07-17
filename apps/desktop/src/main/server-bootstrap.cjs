@@ -39,12 +39,22 @@ function copyDirRecursive(src, dest) {
 function ensureStackInstalled() {
   const bundled = getBundledStackDir();
   const installed = getInstalledStackDir();
-  const marker = path.join(installed, 'docker-compose.yml');
-  if (fs.existsSync(marker)) return installed;
   if (!bundled) {
     throw new Error('Fichiers server-stack introuvables dans l’installateur.');
   }
-  copyDirRecursive(bundled, installed);
+  // Toujours resynchroniser images + scripts depuis l’installateur (mise à jour Server).
+  fs.mkdirSync(installed, { recursive: true });
+  for (const entry of fs.readdirSync(bundled, { withFileTypes: true })) {
+    const from = path.join(bundled, entry.name);
+    const to = path.join(installed, entry.name);
+    // Ne pas écraser .env.server / .bootstrap-done (secrets et état locaux).
+    if (entry.name === '.env.server' || entry.name === '.bootstrap-done') continue;
+    if (entry.isDirectory()) {
+      copyDirRecursive(from, to);
+    } else {
+      fs.copyFileSync(from, to);
+    }
+  }
   return installed;
 }
 

@@ -126,9 +126,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const canPerm = useCallback(
     (permission: string) => {
-      if (!user?.permissions) return false;
-      if (user.permissions.includes('*')) return true;
-      return user.permissions.includes(permission);
+      if (!user) return false;
+      const perms = user.permissions;
+      // ADMIN sans permissions hydratées (ancien login / cache) : accès complet.
+      if ((!perms || perms.length === 0) && user.role === 'ADMIN') return true;
+      if (!perms) return false;
+      if (perms.includes('*')) return true;
+      return perms.includes(permission);
     },
     [user],
   );
