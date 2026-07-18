@@ -32,7 +32,7 @@ export class CompanyController {
   }
 
   @Get('printer')
-  @Roles('ADMIN', 'MANAGER', 'CASHIER', 'STOCK_MANAGER', 'ACCOUNTANT')
+  @Roles('ADMIN', 'MANAGER', 'CASHIER', 'STOCK_MANAGER', 'ACCOUNTANT', 'LIVREUR')
   printer(@Query('departmentId') departmentIdRaw?: string) {
     if (departmentIdRaw === undefined || departmentIdRaw === '') {
       return this.companyService.getPrinterSettings();

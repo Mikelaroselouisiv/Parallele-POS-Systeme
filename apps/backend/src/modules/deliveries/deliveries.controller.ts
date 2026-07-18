@@ -34,11 +34,17 @@ export class DeliveriesController {
     @Query('companyId') companyId?: string,
     @Query('departmentId') departmentId?: string,
     @Query('status') status?: string,
+    @Query('q') q?: string,
+    @Query('skip') skip?: string,
+    @Query('take') take?: string,
   ) {
     return this.deliveriesService.list(user, {
       companyId: DeliveriesController.parsePositiveInt(companyId),
       departmentId: DeliveriesController.parsePositiveInt(departmentId),
       status,
+      q,
+      skip: DeliveriesController.parseNonNegativeInt(skip),
+      take: DeliveriesController.parsePositiveInt(take),
     });
   }
 
@@ -62,5 +68,11 @@ export class DeliveriesController {
     if (raw == null || raw === '') return undefined;
     const n = Number.parseInt(raw, 10);
     return Number.isFinite(n) && n > 0 ? n : undefined;
+  }
+
+  private static parseNonNegativeInt(raw?: string): number | undefined {
+    if (raw == null || raw === '') return undefined;
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
   }
 }

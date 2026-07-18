@@ -719,36 +719,47 @@ export class ReportsService {
   ): Promise<Buffer> {
     const { from, to } = this.resolveSalesByProductRange(opts);
     const [company, rows] = await Promise.all([
-      this.prisma.company.findUnique({ where: { id: companyId }, select: { name: true } }),
+      this.prisma.company.findUnique({
+        where: { id: companyId },
+        select: { name: true, logoUrl: true },
+      }),
       this.querySalesByProduct(from, to, [companyId], opts.departmentId),
     ]);
     if (!company) {
       throw new BadRequestException('Entreprise introuvable');
     }
 
-    const PDFDocument = require('pdfkit');
-    const doc = new PDFDocument({ size: 'A4', margin: 40 });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
+    const {
+      collectPdfBuffer,
+      createPdfDoc,
+      drawKeyValueBlock,
+      drawReportHeader,
+      drawSectionTitle,
+      drawTableHeader,
+      drawTableRow,
+      generatedMetaLine,
+    } = await import('../../common/pdf/pdf-document');
+    const { formatDateFr, formatDateTimeFr, formatMoneyHtg, formatQty } = await import(
+      '../../common/pdf/pdf-format'
+    );
 
-    const fmtMoney = (n: number) => (Number.isFinite(n) ? n.toFixed(2) : '—');
-    const fmtQty = (n: number) => (Number.isFinite(n) ? n.toFixed(3) : '—');
-    const fmtRange = () => {
-      if (opts.dateFrom?.trim() && opts.dateTo?.trim()) {
-        return `${opts.dateFrom.trim()} → ${opts.dateTo.trim()}`;
-      }
-      return `période ${opts.period ?? 'month'}`;
-    };
+    const periodLabel =
+      opts.dateFrom?.trim() && opts.dateTo?.trim()
+        ? `${formatDateFr(opts.dateFrom.trim())} → ${formatDateFr(opts.dateTo.trim())}`
+        : `période ${opts.period ?? 'month'}`;
 
-    doc.fontSize(16).text('Ventes par produit / service', { align: 'left' });
-    doc.moveDown(0.35);
-    doc.fontSize(10).text(`Entreprise : ${company.name}`);
-    doc.fontSize(10).text(`Période : ${fmtRange()} (${from.toLocaleString()} — ${to.toLocaleString()})`);
-    doc.fontSize(10).text(`Généré le : ${new Date().toLocaleString()}`);
-    doc.moveDown();
+    const doc = createPdfDoc();
+    await drawReportHeader(doc, {
+      title: 'Ventes par produit / service',
+      brand: { companyName: company.name, logoUrl: company.logoUrl },
+      metaLines: [
+        `Période : ${periodLabel} (${formatDateTimeFr(from)} — ${formatDateTimeFr(to)})`,
+        generatedMetaLine(),
+      ],
+    });
 
     if (rows.length === 0) {
-      doc.fontSize(11).text('Aucune ligne sur cette période.');
+      doc.fontSize(11).fillColor('#64748b').text('Aucune ligne sur cette période.');
     } else {
       type Row = (typeof rows)[number];
       const groups: { key: string; label: string; items: Row[] }[] = [];
@@ -760,32 +771,43 @@ export class ReportsService {
         else groups.push({ key, label, items: [r] });
       }
 
+      const cols = [
+        { key: 'name', label: 'Article', width: 220 },
+        { key: 'type', label: 'Type', width: 70 },
+        { key: 'qty', label: 'Qté', width: 70, align: 'right' as const },
+        { key: 'total', label: 'Montant', width: 150, align: 'right' as const },
+      ];
+
       let grand = 0;
       for (const g of groups) {
-        doc.fontSize(12).text(g.label, { underline: true });
-        doc.moveDown(0.2);
+        drawSectionTitle(doc, g.label);
+        drawTableHeader(doc, cols);
         let sub = 0;
-        for (const r of g.items) {
-          const typeLabel = r.isService ? 'Service' : 'Produit';
-          doc
-            .fontSize(9)
-            .text(
-              `${r.productName} (${typeLabel}) — Qté ${fmtQty(r.quantity)} — ${fmtMoney(r.totalSubtotal)}`,
-            );
+        g.items.forEach((r, i) => {
+          drawTableRow(
+            doc,
+            cols,
+            {
+              name: r.productName,
+              type: r.isService ? 'Service' : 'Produit',
+              qty: formatQty(r.quantity),
+              total: formatMoneyHtg(r.totalSubtotal),
+            },
+            { alt: i % 2 === 1 },
+          );
           sub += r.totalSubtotal;
           grand += r.totalSubtotal;
-        }
-        doc.fontSize(9).text(`Sous-total ${g.label} : ${fmtMoney(sub)}`);
-        doc.moveDown(0.45);
+        });
+        doc.moveDown(0.2);
+        drawKeyValueBlock(doc, [
+          { label: `Sous-total ${g.label}`, value: formatMoneyHtg(sub) },
+        ]);
+        doc.moveDown(0.35);
       }
-      doc.fontSize(11).text(`TOTAL : ${fmtMoney(grand)}`);
+      drawKeyValueBlock(doc, [{ label: 'TOTAL', value: formatMoneyHtg(grand), emphasize: true }]);
     }
 
-    return await new Promise<Buffer>((resolve, reject) => {
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
-      doc.end();
-    });
+    return collectPdfBuffer(doc);
   }
 
   /**
@@ -806,10 +828,14 @@ export class ReportsService {
     const ids = this.normalizeCompanyIds(companyIds);
     const [companies, snap, rows, dept] = await Promise.all([
       ids == null
-        ? this.prisma.company.findMany({ where: { deletedAt: null }, select: { name: true }, orderBy: { name: 'asc' } })
+        ? this.prisma.company.findMany({
+            where: { deletedAt: null },
+            select: { name: true, logoUrl: true },
+            orderBy: { name: 'asc' },
+          })
         : this.prisma.company.findMany({
             where: { id: { in: ids }, deletedAt: null },
-            select: { name: true },
+            select: { name: true, logoUrl: true },
             orderBy: { name: 'asc' },
           }),
       this.dashboardSummaryRange(dateFrom.trim(), dateTo.trim(), companyIds, departmentId),
@@ -826,70 +852,90 @@ export class ReportsService {
       throw new BadRequestException('Entreprise introuvable');
     }
 
-    const companyLine =
-      companies.length === 0
-        ? 'Entreprise : —'
-        : companies.length === 1
-          ? `Entreprise : ${companies[0].name}`
-          : `Entreprises : ${companies.map((c) => c.name).join(', ')}`;
+    const {
+      collectPdfBuffer,
+      createPdfDoc,
+      drawFooterNote,
+      drawKeyValueBlock,
+      drawReportHeader,
+      drawSectionTitle,
+      drawTableHeader,
+      drawTableRow,
+      generatedMetaLine,
+    } = await import('../../common/pdf/pdf-document');
+    const { formatDateFr, formatMoneyHtg, formatQty } = await import('../../common/pdf/pdf-format');
 
-    const PDFDocument = require('pdfkit');
-    const doc = new PDFDocument({ size: 'A4', margin: 40 });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
-
-    const fmtMoney = (n: number) => (Number.isFinite(n) ? n.toFixed(2) : '—');
+    const brandName =
+      companies.length === 1
+        ? companies[0].name
+        : companies.length > 1
+          ? companies.map((c) => c.name).join(', ')
+          : 'POS Frères Baziles';
+    const logoUrl = companies.length === 1 ? companies[0].logoUrl : null;
     const deptLine =
       departmentId != null && departmentId > 0
         ? `Département : ${dept?.name?.trim() || `#${departmentId}`}`
         : 'Département : tous';
 
-    doc.fontSize(18).text('Synthèse financière', { align: 'left' });
-    doc.moveDown(0.35);
-    doc.fontSize(10).text(companyLine);
-    doc.fontSize(10).text(`Période : ${dateFrom.trim()} → ${dateTo.trim()} (inclusif)`);
-    doc.fontSize(10).text(deptLine);
-    doc.fontSize(10).text(`Généré le : ${new Date().toLocaleString('fr-FR')}`);
-    doc.moveDown(0.6);
+    const doc = createPdfDoc();
+    await drawReportHeader(doc, {
+      title: 'Synthèse financière',
+      brand: { companyName: brandName, logoUrl },
+      metaLines: [
+        `Période : ${formatDateFr(dateFrom.trim())} → ${formatDateFr(dateTo.trim())} (inclusif)`,
+        deptLine,
+        generatedMetaLine(),
+      ],
+    });
 
-    doc.fontSize(12).text('Indicateurs', { underline: true });
-    doc.moveDown(0.25);
-    doc.fontSize(10).text(`Chiffre d’affaires (ventes) : ${fmtMoney(snap.sales)}`);
-    doc.fontSize(10).text(`Achats reçus : ${fmtMoney(snap.purchases)}`);
-    doc.fontSize(10).text(`Dépenses manuelles : ${fmtMoney(snap.manualExpenses)}`);
-    doc.fontSize(10).text(`Total sorties : ${fmtMoney(snap.totalOutflows)}`);
-    doc.fontSize(11).text(`Résultat net : ${fmtMoney(snap.balance)}`, { continued: false });
-    doc.moveDown(0.6);
+    drawSectionTitle(doc, 'Indicateurs');
+    drawKeyValueBlock(doc, [
+      { label: 'Chiffre d’affaires (ventes)', value: formatMoneyHtg(snap.sales) },
+      { label: 'Achats reçus', value: formatMoneyHtg(snap.purchases) },
+      { label: 'Dépenses manuelles', value: formatMoneyHtg(snap.manualExpenses) },
+      { label: 'Total sorties', value: formatMoneyHtg(snap.totalOutflows) },
+      { label: 'Résultat net', value: formatMoneyHtg(snap.balance), emphasize: true },
+    ]);
 
+    doc.moveDown(0.45);
+    drawSectionTitle(doc, 'Top 25 articles par chiffre d’affaires');
     const sorted = [...rows].sort((a, b) => b.totalSubtotal - a.totalSubtotal).slice(0, 25);
-    doc.fontSize(12).text('Détail des ventes par article (top 25 par CA)', { underline: true });
-    doc.moveDown(0.25);
     if (sorted.length === 0) {
-      doc.fontSize(10).text('Aucune vente sur cette période.');
+      doc.fontSize(10).fillColor('#64748b').text('Aucune vente sur cette période.');
     } else {
+      const cols = [
+        { key: 'name', label: 'Article', width: 220 },
+        { key: 'type', label: 'Type', width: 70 },
+        { key: 'qty', label: 'Qté', width: 70, align: 'right' as const },
+        { key: 'total', label: 'Montant', width: 150, align: 'right' as const },
+      ];
+      drawTableHeader(doc, cols);
       let grand = 0;
-      for (const r of sorted) {
-        const typeLabel = r.isService ? 'Service' : 'Produit';
-        doc.fontSize(9).text(
-          `${r.productName} (${typeLabel}) — Qté ${Number(r.quantity).toFixed(3)} — ${fmtMoney(r.totalSubtotal)}`,
+      sorted.forEach((r, i) => {
+        drawTableRow(
+          doc,
+          cols,
+          {
+            name: r.productName,
+            type: r.isService ? 'Service' : 'Produit',
+            qty: formatQty(r.quantity),
+            total: formatMoneyHtg(r.totalSubtotal),
+          },
+          { alt: i % 2 === 1 },
         );
         grand += r.totalSubtotal;
-      }
-      doc.moveDown(0.3);
-      doc.fontSize(10).text(`Sous-total (lignes listées) : ${fmtMoney(grand)}`);
+      });
+      doc.moveDown(0.25);
+      drawKeyValueBlock(doc, [
+        { label: 'Sous-total (lignes listées)', value: formatMoneyHtg(grand) },
+      ]);
     }
 
-    doc.moveDown(0.5);
-    doc.fontSize(8).fillColor('#666').text(
-      'Les montants sont issus des mêmes règles que le tableau de bord (ventes complétées, réceptions postées, dépenses saisies).',
-      { align: 'left' },
+    drawFooterNote(
+      doc,
+      'Les montants suivent les mêmes règles que le tableau de bord (ventes complétées, réceptions postées, dépenses saisies).',
     );
-    doc.fillColor('#000');
 
-    return await new Promise<Buffer>((resolve, reject) => {
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
-      doc.end();
-    });
+    return collectPdfBuffer(doc);
   }
 }

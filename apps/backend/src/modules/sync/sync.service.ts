@@ -18,6 +18,9 @@ type Delegate = {
   update: (args: unknown) => Promise<Record<string, unknown>>;
 };
 
+/** Modèles sync sans soft-delete (pas de colonne deletedAt). */
+const NO_DELETED_AT = new Set<SyncEntityName>(['AuditLog', 'DeliveryItem']);
+
 @Injectable()
 export class SyncService {
   private readonly logger = new Logger(SyncService.name);
@@ -138,11 +141,24 @@ export class SyncService {
       deletedAt: record.deletedAt,
     });
     if (existing) {
-      const existingAt = this.effectiveWriteAt(existing);
-      if (incomingAt <= existingAt) {
+      if (!this.shouldApplyIncoming(entity, record, existing, incomingAt)) {
         return 'skipped';
       }
-      await this.updateFromSync(entity, record);
+      await this.updateFromSync(entity, record.uuid, record);
+      return 'updated';
+    }
+
+    // Même vente / ligne déjà présente sous un autre uuid (fiche fantôme ensureForSale).
+    const byNaturalKey = await this.findByNaturalKey(entity, record);
+    if (byNaturalKey) {
+      if (!this.shouldApplyIncoming(entity, record, byNaturalKey, incomingAt)) {
+        return 'skipped';
+      }
+      const localUuid = String(byNaturalKey.uuid);
+      await this.updateFromSync(entity, localUuid, record, { adoptUuid: true });
+      this.logger.log(
+        `Sync ${entity}: fusion clé naturelle ${localUuid} → ${record.uuid}`,
+      );
       return 'updated';
     }
 
@@ -150,16 +166,107 @@ export class SyncService {
     return 'created';
   }
 
-  private async createFromSync(entity: SyncEntityName, record: SyncRecordDto) {
-    const data = await this.sanitizePayload(entity, record);
-    await this.delegate(entity).create({ data });
+  /**
+   * Delivery / DeliveryItem : une seule fiche par vente / ligne.
+   * En cas de conflit, le statut (ou qty) le plus avancé gagne, pas seulement updatedAt.
+   */
+  private shouldApplyIncoming(
+    entity: SyncEntityName,
+    record: SyncRecordDto,
+    existing: Record<string, unknown>,
+    incomingAt: Date,
+  ): boolean {
+    if (entity === 'Delivery') {
+      const inRank = this.deliveryStatusRank(record.data?.status);
+      const exRank = this.deliveryStatusRank(existing.status);
+      if (inRank !== exRank) return inRank > exRank;
+    }
+    if (entity === 'DeliveryItem') {
+      const inQty = Number(record.data?.quantityDelivered ?? 0);
+      const exQty = Number(existing.quantityDelivered ?? 0);
+      if (Number.isFinite(inQty) && Number.isFinite(exQty) && inQty !== exQty) {
+        return inQty > exQty;
+      }
+    }
+    const existingAt = this.effectiveWriteAt(existing);
+    return incomingAt > existingAt;
   }
 
-  private async updateFromSync(entity: SyncEntityName, record: SyncRecordDto) {
+  private deliveryStatusRank(status: unknown): number {
+    const s = String(status ?? 'PENDING');
+    if (s === 'DELIVERED') return 2;
+    if (s === 'PARTIAL') return 1;
+    return 0;
+  }
+
+  private async findByNaturalKey(
+    entity: SyncEntityName,
+    record: SyncRecordDto,
+  ): Promise<Record<string, unknown> | null> {
+    if (entity === 'Delivery') {
+      const saleUuid = record.data?.saleUuid;
+      if (saleUuid == null || saleUuid === '') return null;
+      const sale = await this.prisma.sale.findUnique({
+        where: { uuid: String(saleUuid) },
+        select: { id: true },
+      });
+      if (!sale) return null;
+      return this.prisma.delivery.findUnique({
+        where: { saleId: sale.id },
+      }) as Promise<Record<string, unknown> | null>;
+    }
+    if (entity === 'DeliveryItem') {
+      const saleItemUuid = record.data?.saleItemUuid;
+      if (saleItemUuid == null || saleItemUuid === '') return null;
+      const saleItem = await this.prisma.saleItem.findUnique({
+        where: { uuid: String(saleItemUuid) },
+        select: { id: true },
+      });
+      if (!saleItem) return null;
+      return this.prisma.deliveryItem.findUnique({
+        where: { saleItemId: saleItem.id },
+      }) as Promise<Record<string, unknown> | null>;
+    }
+    return null;
+  }
+
+  private async createFromSync(entity: SyncEntityName, record: SyncRecordDto) {
     const data = await this.sanitizePayload(entity, record);
-    delete data.uuid;
+    try {
+      await this.delegate(entity).create({ data });
+    } catch (err) {
+      // Course : fiche créée entre findByNaturalKey et create.
+      if (
+        (entity === 'Delivery' || entity === 'DeliveryItem') &&
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        const shadow = await this.findByNaturalKey(entity, record);
+        if (shadow) {
+          await this.updateFromSync(entity, String(shadow.uuid), record, {
+            adoptUuid: true,
+          });
+          return;
+        }
+      }
+      throw err;
+    }
+  }
+
+  private async updateFromSync(
+    entity: SyncEntityName,
+    whereUuid: string,
+    record: SyncRecordDto,
+    opts?: { adoptUuid?: boolean },
+  ) {
+    const data = await this.sanitizePayload(entity, record);
+    if (!opts?.adoptUuid) {
+      delete data.uuid;
+    } else {
+      data.uuid = record.uuid;
+    }
     await this.delegate(entity).update({
-      where: { uuid: record.uuid },
+      where: { uuid: whereUuid },
       data,
     });
   }
@@ -183,6 +290,9 @@ export class SyncService {
       } else if (typeof raw.createdAt === 'string') {
         raw.createdAt = new Date(raw.createdAt);
       }
+    } else if (NO_DELETED_AT.has(entity)) {
+      delete raw.deletedAt;
+      if (record.updatedAt) raw.updatedAt = new Date(record.updatedAt);
     } else {
       if (record.updatedAt) raw.updatedAt = new Date(record.updatedAt);
       if (record.deletedAt === null) raw.deletedAt = null;
@@ -344,6 +454,8 @@ export class SyncService {
       Sale: this.prisma.sale as unknown as Delegate,
       SaleItem: this.prisma.saleItem as unknown as Delegate,
       Payment: this.prisma.payment as unknown as Delegate,
+      Delivery: this.prisma.delivery as unknown as Delegate,
+      DeliveryItem: this.prisma.deliveryItem as unknown as Delegate,
       StockMovement: this.prisma.stockMovement as unknown as Delegate,
       FinanceEntry: this.prisma.financeEntry as unknown as Delegate,
       ExpenseCategory: this.prisma.expenseCategory as unknown as Delegate,

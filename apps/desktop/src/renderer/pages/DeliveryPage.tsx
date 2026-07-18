@@ -3,6 +3,8 @@ import {
   getCompanies,
   getCompanyById,
   getDepartments,
+  getPrinterSettings,
+  getSaleById,
   listDeliveries,
   updateDelivery,
 } from '../services/api';
@@ -11,6 +13,10 @@ import { useAuth } from '../context/AuthContext';
 import { formatMoney } from '../utils/currency';
 import { formatQuantity } from '../utils/formatQuantity';
 import { useAutoClearMessage } from '../hooks/useAutoClearMessage';
+import { buildReceiptPayloadFromSale } from '../utils/receiptPayload';
+import { buildSaleDetailPrintHtml, openBrowserPrintWindow } from '../utils/saleReceiptBrowserHtml';
+
+const PAGE_SIZE = 100;
 
 const STATUS_LABEL: Record<Delivery['status'], string> = {
   PENDING: 'Non livré',
@@ -48,11 +54,16 @@ export function DeliveryPage() {
   const [companyId, setCompanyId] = useState<number | ''>('');
   const [departmentId, setDepartmentId] = useState<number | ''>('');
   const [statusFilter, setStatusFilter] = useState<'' | Delivery['status']>('');
+  const [searchInput, setSearchInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
   const [rows, setRows] = useState<Delivery[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Delivery | null>(null);
   const [draftQty, setDraftQty] = useState<Record<number, string>>({});
   const [saving, setSaving] = useState(false);
+  const [printingId, setPrintingId] = useState<number | null>(null);
   const [message, setMessage] = useAutoClearMessage();
   const [scopeLabel, setScopeLabel] = useState('');
 
@@ -102,6 +113,18 @@ export function DeliveryPage() {
       .catch(() => setDepartments([]));
   }, [canFilter, companyId]);
 
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setSearchQuery(searchInput.trim());
+      setPage(0);
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [searchInput]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [companyId, departmentId, statusFilter, lockedScope]);
+
   async function reload() {
     setLoading(true);
     try {
@@ -109,10 +132,15 @@ export function DeliveryPage() {
         companyId: canFilter && companyId !== '' ? companyId : undefined,
         departmentId: canFilter && departmentId !== '' ? departmentId : undefined,
         status: statusFilter || undefined,
+        q: searchQuery || undefined,
+        skip: page * PAGE_SIZE,
+        take: PAGE_SIZE,
       });
-      setRows(data);
+      setRows(data.items);
+      setTotal(data.total);
     } catch {
       setRows([]);
+      setTotal(0);
       setMessage('Impossible de charger les livraisons');
     } finally {
       setLoading(false);
@@ -122,7 +150,11 @@ export function DeliveryPage() {
   useEffect(() => {
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId, departmentId, statusFilter, lockedScope]);
+  }, [companyId, departmentId, statusFilter, lockedScope, searchQuery, page]);
+
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const from = total === 0 ? 0 : page * PAGE_SIZE + 1;
+  const to = Math.min(total, (page + 1) * PAGE_SIZE);
 
   const counts = useMemo(() => {
     let pending = 0;
@@ -180,6 +212,51 @@ export function DeliveryPage() {
     }
   }
 
+  async function reprintSaleSlip(delivery: Delivery) {
+    const saleId = delivery.sale?.id ?? delivery.saleId;
+    if (!saleId) {
+      setMessage('Vente introuvable pour impression');
+      return;
+    }
+    setPrintingId(delivery.id);
+    try {
+      const sale = await getSaleById(saleId);
+      const cid =
+        delivery.companyId ||
+        sale.items?.[0]?.product?.companyId ||
+        (typeof user?.companyId === 'number' ? user.companyId : undefined);
+      const deptId =
+        delivery.departmentId ??
+        sale.items?.[0]?.product?.departmentId ??
+        sale.items?.[0]?.product?.department?.id ??
+        undefined;
+
+      const company = cid != null ? await getCompanyById(cid).catch(() => null) : null;
+      const printer =
+        typeof deptId === 'number' ? await getPrinterSettings(deptId).catch(() => null) : null;
+
+      const hasElectronPrint = typeof window.desktopApp?.printReceipt === 'function';
+      if (hasElectronPrint) {
+        const payload = buildReceiptPayloadFromSale(sale, company, printer);
+        const result = await window.desktopApp!.printReceipt!(payload);
+        if (!result.ok) {
+          setMessage(result.reason || "L'impression n'a pas pu aboutir");
+          return;
+        }
+        setMessage(`Fiche #${saleId} réimprimée`);
+      } else {
+        openBrowserPrintWindow(
+          buildSaleDetailPrintHtml(sale, company?.name ?? delivery.company?.name),
+        );
+        setMessage('Fenêtre d’impression ouverte');
+      }
+    } catch {
+      setMessage('Impossible de réimprimer la fiche');
+    } finally {
+      setPrintingId(null);
+    }
+  }
+
   return (
     <div className="page delivery-page">
       <header className="delivery-header">
@@ -192,6 +269,14 @@ export function DeliveryPage() {
           </div>
         </div>
         <div className="delivery-filters">
+          <input
+            type="search"
+            className="delivery-search"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="N° fiche ou client…"
+            aria-label="Rechercher une fiche"
+          />
           {canFilter ? (
             <>
               <select
@@ -243,36 +328,84 @@ export function DeliveryPage() {
 
       {message ? <p className="delivery-toast">{message}</p> : null}
 
-      {loading ? (
+      <div className="delivery-toolbar">
+        <p className="delivery-muted delivery-range">
+          {loading
+            ? 'Chargement…'
+            : total === 0
+              ? 'Aucune fiche'
+              : `${from}–${to} sur ${total}`}
+        </p>
+        {total > PAGE_SIZE ? (
+          <div className="delivery-pager">
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={loading || page <= 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              Précédent
+            </button>
+            <span className="delivery-page-label">
+              Page {page + 1} / {pageCount}
+            </span>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={loading || page + 1 >= pageCount}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Suivant
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      {loading && rows.length === 0 ? (
         <p className="delivery-muted">Chargement…</p>
       ) : rows.length === 0 ? (
         <p className="delivery-empty">Aucune fiche</p>
       ) : (
         <div className="delivery-grid">
-          {rows.map((d) => (
-            <button
-              key={d.id}
-              type="button"
-              className={`delivery-card ${statusClass(d.status)}`}
-              onClick={() => openCard(d)}
-            >
-              <div className="delivery-card-top">
-                <span className="delivery-card-ref">#{d.sale?.id ?? d.saleId}</span>
-                <span className="delivery-card-badge">{STATUS_LABEL[d.status]}</span>
-              </div>
-              <div className="delivery-card-client">
-                {d.sale?.clientName?.trim() || 'Client'}
-              </div>
-              <div className="delivery-card-meta">
-                {d.company?.name}
-                {d.department?.name ? ` · ${d.department.name}` : ''}
-              </div>
-              <div className="delivery-card-foot">
-                <span>{formatWhen(d.sale?.createdAt ?? d.createdAt)}</span>
-                <span className="delivery-card-total">{formatMoney(d.sale?.total)}</span>
-              </div>
-            </button>
-          ))}
+          {rows.map((d) => {
+            const busyPrint = printingId === d.id;
+            return (
+              <article key={d.id} className={`delivery-card ${statusClass(d.status)}`}>
+                <button
+                  type="button"
+                  className="delivery-card-body"
+                  onClick={() => openCard(d)}
+                >
+                  <div className="delivery-card-top">
+                    <span className="delivery-card-ref">#{d.sale?.id ?? d.saleId}</span>
+                    <span className="delivery-card-badge">{STATUS_LABEL[d.status]}</span>
+                  </div>
+                  <div className="delivery-card-client">
+                    {d.sale?.clientName?.trim() || 'Client'}
+                  </div>
+                  <div className="delivery-card-meta">
+                    {d.company?.name}
+                    {d.department?.name ? ` · ${d.department.name}` : ''}
+                  </div>
+                  <div className="delivery-card-foot">
+                    <span>{formatWhen(d.sale?.createdAt ?? d.createdAt)}</span>
+                    <span className="delivery-card-total">{formatMoney(d.sale?.total)}</span>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary delivery-card-print"
+                  disabled={busyPrint || printingId != null}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void reprintSaleSlip(d);
+                  }}
+                >
+                  {busyPrint ? 'Impression…' : 'Imprimer'}
+                </button>
+              </article>
+            );
+          })}
         </div>
       )}
 
@@ -332,23 +465,31 @@ export function DeliveryPage() {
               })}
             </ul>
 
-            <div className="modal-actions">
+            <div className="modal-actions delivery-modal-actions">
               <button type="button" className="btn btn-ghost" onClick={() => setSelected(null)}>
                 Fermer
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={printingId != null || saving}
+                onClick={() => void reprintSaleSlip(selected)}
+              >
+                {printingId === selected.id ? 'Impression…' : 'Réimprimer fiche'}
               </button>
               {canManage && selected.status !== 'DELIVERED' ? (
                 <>
                   <button
                     type="button"
                     className="btn btn-secondary"
-                    disabled={saving}
+                    disabled={saving || printingId != null}
                     onClick={() => void savePartial()}
                   >
                     Enregistrer
                   </button>
                   <button
                     type="button"
-                    disabled={saving}
+                    disabled={saving || printingId != null}
                     onClick={() => void markAllDelivered()}
                   >
                     Tout livrer

@@ -15,6 +15,8 @@ export const SYNC_ENTITIES = [
   'Sale',
   'SaleItem',
   'Payment',
+  'Delivery',
+  'DeliveryItem',
   'StockMovement',
   'FinanceEntry',
   'ExpenseCategory',

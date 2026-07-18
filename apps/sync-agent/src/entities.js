@@ -20,6 +20,8 @@ export const ENTITY_ORDER = [
   'Sale',
   'SaleItem',
   'Payment',
+  'Delivery',
+  'DeliveryItem',
   'StockMovement',
   'FinanceEntry',
   'InventorySession',

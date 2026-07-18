@@ -413,12 +413,23 @@ export async function listDeliveries(params?: {
   companyId?: number;
   departmentId?: number;
   status?: string;
-}): Promise<Delivery[]> {
-  const { data } = await api.get<Delivery[]>('/deliveries', {
+  q?: string;
+  skip?: number;
+  take?: number;
+}): Promise<{ items: Delivery[]; total: number; skip: number; take: number }> {
+  const { data } = await api.get<{
+    items: Delivery[];
+    total: number;
+    skip: number;
+    take: number;
+  }>('/deliveries', {
     params: {
       companyId: params?.companyId,
       departmentId: params?.departmentId,
       status: params?.status,
+      q: params?.q || undefined,
+      skip: params?.skip,
+      take: params?.take,
     },
   });
   return data;

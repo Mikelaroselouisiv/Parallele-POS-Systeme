@@ -12,11 +12,18 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import type { Response } from 'express';
-// pdfkit ne fournit pas forcément de types utilisables côté TS.
-// On garde un chargement dynamique pour éviter un blocage de compilation.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const PDFDocument = require('pdfkit');
 import { GetUser } from '../../common/decorators/get-user.decorator';
+import {
+  collectPdfBuffer,
+  createPdfDoc,
+  drawFooterNote,
+  drawReportHeader,
+  drawSectionTitle,
+  drawTableHeader,
+  drawTableRow,
+  generatedMetaLine,
+} from '../../common/pdf/pdf-document';
+import { formatDateFr, formatDateTimeFr, formatQty } from '../../common/pdf/pdf-format';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -80,7 +87,7 @@ export class InventoryController {
     }
     const sheet = await this.inventoryService.getCountSheetContext(deptId);
     const pdfBuffer = await InventoryController.buildCountSheetPdf(sheet);
-    const filenameDate = new Date().toISOString().slice(0, 10);
+    const filenameDate = formatDateFr(new Date()).replace(/\//g, '-');
     const safeName = `${sheet.department.company.name}_${sheet.department.name}`
       .replace(/[^\w\- ]+/g, '')
       .replace(/\s+/g, '_')
@@ -196,46 +203,61 @@ export class InventoryController {
       departmentIds: parseIds(departmentIdsRaw),
     });
 
-    const doc = new PDFDocument({ size: 'A4', margin: 40, layout: 'landscape' });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c) => chunks.push(c));
+    const companyNames = [
+      ...new Set(
+        snapshot.items
+          .map((i) => i.company?.name?.trim())
+          .filter((n): n is string => Boolean(n)),
+      ),
+    ];
+    const brandName =
+      companyNames.length === 1 ? companyNames[0] : companyNames.join(', ') || 'POS Frères Baziles';
 
-    const fmtNum = (v: number) =>
-      Number.isFinite(v)
-        ? v.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
-        : '—';
-
-    doc.fontSize(18).text('Inventaire global');
-    doc.moveDown(0.35);
-    doc.fontSize(10).text(`Généré le ${new Date(snapshot.generatedAt).toLocaleString('fr-FR')}`);
-    doc.fontSize(10).text(`Produits : ${snapshot.items.length}`);
-    doc.moveDown(0.75);
-
-    if (snapshot.items.length === 0) {
-      doc.fontSize(11).text('Aucun produit.');
-    } else {
-      doc.fontSize(8).font('Helvetica-Bold');
-      doc.text('Entreprise | Département | Produit | SKU | Unité | Stock | Min | Statut');
-      doc.font('Helvetica');
-      doc.moveDown(0.25);
-      for (const item of snapshot.items) {
-        if (doc.y > 520) doc.addPage();
-        const company = item.company?.name ?? '—';
-        const dept = item.department?.name ?? '—';
-        const status = item.lowStock ? 'Bas' : 'OK';
-        doc.fontSize(8).text(
-          `${company} | ${dept} | ${item.name} | ${item.sku ?? '—'} | ${item.unitLabel} | ${fmtNum(item.stock)} | ${fmtNum(item.stockMin)} | ${status}`,
-        );
-      }
-    }
-
-    const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
-      doc.end();
+    const doc = createPdfDoc({ landscape: true });
+    await drawReportHeader(doc, {
+      title: 'Inventaire global',
+      brand: { companyName: brandName },
+      metaLines: [
+        `Produits : ${snapshot.items.length}`,
+        generatedMetaLine(`réf. ${formatDateTimeFr(snapshot.generatedAt)}`),
+      ],
     });
 
-    const filenameDate = new Date().toISOString().slice(0, 10);
+    if (snapshot.items.length === 0) {
+      doc.fontSize(11).fillColor('#64748b').text('Aucun produit.');
+    } else {
+      const cols = [
+        { key: 'company', label: 'Entreprise', width: 110 },
+        { key: 'dept', label: 'Département', width: 100 },
+        { key: 'name', label: 'Produit', width: 160 },
+        { key: 'sku', label: 'SKU', width: 70 },
+        { key: 'unit', label: 'Unité', width: 70 },
+        { key: 'stock', label: 'Stock', width: 60, align: 'right' as const },
+        { key: 'min', label: 'Min', width: 50, align: 'right' as const },
+        { key: 'status', label: 'Statut', width: 50, align: 'center' as const },
+      ];
+      drawTableHeader(doc, cols);
+      snapshot.items.forEach((item, i) => {
+        drawTableRow(
+          doc,
+          cols,
+          {
+            company: item.company?.name ?? '—',
+            dept: item.department?.name ?? '—',
+            name: item.name,
+            sku: item.sku ?? '—',
+            unit: item.unitLabel,
+            stock: formatQty(item.stock),
+            min: formatQty(item.stockMin),
+            status: item.lowStock ? 'Bas' : 'OK',
+          },
+          { alt: i % 2 === 1 },
+        );
+      });
+    }
+
+    const pdfBuffer = await collectPdfBuffer(doc);
+    const filenameDate = formatDateFr(new Date()).replace(/\//g, '-');
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
@@ -290,66 +312,63 @@ export class InventoryController {
       }
     };
 
-    const fmtNum = (v: unknown) => {
-      const n = Number(v ?? 0);
-      if (!Number.isFinite(n)) return '—';
-      return n.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 3 });
-    };
-
-    const fmtDate = (v: string | Date | null | undefined) => {
-      if (!v) return '—';
-      const d = typeof v === 'string' ? new Date(v) : v;
-      if (!Number.isFinite(d.getTime())) return '—';
-      return d.toLocaleString('fr-FR');
-    };
-
     const filterLabel = InventoryController.describeSessionFilter(filters, sessions);
+    const logoUrl =
+      (sessions[0]?.department?.company as { logoUrl?: string | null } | undefined)?.logoUrl ??
+      null;
+    const brandName = sessions[0]?.department?.company?.name ?? 'POS Frères Baziles';
 
-    const doc = new PDFDocument({ size: 'A4', margin: 40 });
-    const filenameDate = new Date().toISOString().slice(0, 10);
-    const safeFilter = filterLabel.replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_').slice(0, 40);
-    const fileBaseName = `historique_inventaires_${safeFilter}`;
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileBaseName}_${filenameDate}.pdf"`);
-
-    const chunks: Buffer[] = [];
-    doc.on('data', (c) => chunks.push(c));
-
-    doc.fontSize(18).text('Historique des inventaires', { align: 'left' });
-    doc.moveDown(0.5);
-    doc.fontSize(11).text(`Périmètre : ${filterLabel}`);
-    doc.fontSize(11).text(`Sessions exportées : ${sessions.length}`);
-    doc.fontSize(11).text(`Généré le : ${fmtDate(new Date().toISOString())}`);
-    doc.moveDown();
+    const doc = createPdfDoc();
+    await drawReportHeader(doc, {
+      title: 'Historique des inventaires',
+      brand: { companyName: brandName, logoUrl },
+      metaLines: [
+        `Périmètre : ${filterLabel}`,
+        `Sessions exportées : ${sessions.length}`,
+        generatedMetaLine(),
+      ],
+    });
 
     if (sessions.length === 0) {
-      doc.fontSize(12).text('Aucune session trouvée pour ce filtre.');
+      doc.fontSize(11).fillColor('#64748b').text('Aucune session trouvée pour ce filtre.');
     } else {
+      const lineCols = [
+        { key: 'name', label: 'Produit', width: 200 },
+        { key: 'unit', label: 'Unité', width: 70 },
+        { key: 'open', label: 'Stock', width: 70, align: 'right' as const },
+        { key: 'counted', label: 'Compté', width: 70, align: 'right' as const },
+        { key: 'var', label: 'Écart', width: 70, align: 'right' as const },
+      ];
+
       for (const s of sessions) {
-        doc.fontSize(13).text(`Session #${s.id} — ${s.label ?? 'Sans libellé'}`);
         const kindLabels: Record<string, string> = {
           OPENING: 'Ouverture de période',
           CLOSING: 'Clôture de période',
           AD_HOC: 'Contrôle ponctuel',
         };
         const kindText = kindLabels[(s as { kind?: string }).kind ?? 'AD_HOC'] ?? 'Contrôle ponctuel';
-        doc.fontSize(10).text(
-          `Type : ${kindText} | Département : ${s.department.company.name} — ${s.department.name} | Statut : ${statusLabel(
-            s.status,
-          )}`,
+        drawSectionTitle(
+          doc,
+          `Session #${s.id} — ${s.label ?? 'Sans libellé'}`,
         );
-        doc.fontSize(10).text(`Créée : ${fmtDate(s.createdAt)}${s.completedAt ? ` | Clôturée : ${fmtDate(s.completedAt)}` : ''}`);
-        if (s.note) {
-          doc.fontSize(10).text(`Note : ${s.note}`);
-        }
+        doc
+          .fillColor('#64748b')
+          .fontSize(9)
+          .text(
+            `${kindText} · ${s.department.company.name} — ${s.department.name} · ${statusLabel(s.status)}`,
+          );
+        doc.text(
+          `Créée : ${formatDateTimeFr(s.createdAt)}${
+            s.completedAt ? ` · Clôturée : ${formatDateTimeFr(s.completedAt)}` : ''
+          }`,
+        );
+        if (s.note) doc.text(`Note : ${s.note}`);
+        doc.moveDown(0.25);
 
-        doc.moveDown(0.35);
-        doc.fontSize(9).text('Produit | Unité | Stock enregistré | Compté | Écart');
         const lines = s.lines ?? [];
-        for (const line of lines) {
+        drawTableHeader(doc, lineCols);
+        lines.forEach((line, i) => {
           const product = line.product;
-          const sku = product.sku ? ` [${product.sku}]` : '';
           const open = Number(line.systemQtyAtOpen);
           const counted = line.countedQty != null ? Number(line.countedQty) : null;
           const variance = counted != null ? counted - open : null;
@@ -357,23 +376,32 @@ export class InventoryController {
             product.saleUnits?.[0]?.packagingUnit?.label ??
             product.saleUnits?.[0]?.packagingUnit?.code ??
             '—';
-          doc.fontSize(9).text(
-            `• ${product.name}${sku} | ${unit} | ${fmtNum(open)} | ${
-              counted != null ? fmtNum(counted) : '—'
-            } | ${variance != null ? fmtNum(variance) : '—'}`,
+          const sku = product.sku ? ` [${product.sku}]` : '';
+          drawTableRow(
+            doc,
+            lineCols,
+            {
+              name: `${product.name}${sku}`,
+              unit,
+              open: formatQty(open),
+              counted: counted != null ? formatQty(counted) : '—',
+              var: variance != null ? formatQty(variance) : '—',
+            },
+            { alt: i % 2 === 1 },
           );
-        }
-
-        doc.moveDown();
+        });
+        doc.moveDown(0.55);
       }
     }
 
-    const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
-      doc.end();
-    });
-
+    const pdfBuffer = await collectPdfBuffer(doc);
+    const filenameDate = formatDateFr(new Date()).replace(/\//g, '-');
+    const safeFilter = filterLabel.replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_').slice(0, 40);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="historique_inventaires_${safeFilter}_${filenameDate}.pdf"`,
+    );
     res.send(pdfBuffer);
   }
 
@@ -407,9 +435,12 @@ export class InventoryController {
     return 'Toutes les entreprises';
   }
 
-  private static buildCountSheetPdf(sheet: {
+  private static async buildCountSheetPdf(sheet: {
     generatedAt: string;
-    department: { name: string; company: { name: string } };
+    department: {
+      name: string;
+      company: { name: string; logoUrl?: string | null };
+    };
     products: Array<{
       name: string;
       sku: string | null;
@@ -417,50 +448,57 @@ export class InventoryController {
       unitLabel: string;
     }>;
   }): Promise<Buffer> {
-    const doc = new PDFDocument({ size: 'A4', margin: 40, layout: 'landscape' });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c) => chunks.push(c));
-
-    const fmtNum = (v: number) =>
-      Number.isFinite(v)
-        ? v.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
-        : '—';
-    const fmtDate = (v: string) => new Date(v).toLocaleString('fr-FR');
-
-    doc.fontSize(18).text('Feuille d’inventaire physique');
-    doc.moveDown(0.35);
-    doc.fontSize(11).text(`${sheet.department.company.name} — ${sheet.department.name}`);
-    doc.fontSize(10).text(`Généré le ${fmtDate(sheet.generatedAt)} · Stock système au moment de l’export`);
-    doc.moveDown(0.75);
+    const doc = createPdfDoc({ landscape: true });
+    await drawReportHeader(doc, {
+      title: 'Feuille d’inventaire physique',
+      brand: {
+        companyName: sheet.department.company.name,
+        logoUrl: sheet.department.company.logoUrl,
+        subtitle: sheet.department.name,
+      },
+      metaLines: [
+        `Stock système au ${formatDateTimeFr(sheet.generatedAt)}`,
+        generatedMetaLine(),
+      ],
+    });
 
     if (sheet.products.length === 0) {
-      doc.fontSize(11).text('Aucun produit avec stock suivi dans ce département.');
+      doc.fontSize(11).fillColor('#64748b').text('Aucun produit avec stock suivi dans ce département.');
     } else {
-      doc.fontSize(9).font('Helvetica-Bold');
-      doc.text('#  Produit                          SKU        Unité              Stock syst.   Compté    Écart');
-      doc.font('Helvetica');
-      doc.moveDown(0.25);
+      const cols = [
+        { key: 'n', label: '#', width: 30, align: 'right' as const },
+        { key: 'name', label: 'Produit', width: 220 },
+        { key: 'sku', label: 'SKU', width: 80 },
+        { key: 'unit', label: 'Unité', width: 90 },
+        { key: 'stock', label: 'Stock syst.', width: 80, align: 'right' as const },
+        { key: 'counted', label: 'Compté', width: 80, align: 'center' as const },
+        { key: 'var', label: 'Écart', width: 80, align: 'center' as const },
+      ];
+      drawTableHeader(doc, cols);
       sheet.products.forEach((p, i) => {
-        if (doc.y > 520) doc.addPage();
-        const name = p.name.length > 28 ? `${p.name.slice(0, 26)}…` : p.name.padEnd(28, ' ');
-        const sku = (p.sku ?? '—').slice(0, 10).padEnd(10, ' ');
-        const unit = p.unitLabel.length > 16 ? `${p.unitLabel.slice(0, 14)}…` : p.unitLabel.padEnd(16, ' ');
-        doc.fontSize(9).text(
-          `${String(i + 1).padStart(2, ' ')}  ${name}  ${sku}  ${unit}  ${fmtNum(p.stock).padStart(10, ' ')}   ________   ________`,
+        drawTableRow(
+          doc,
+          cols,
+          {
+            n: String(i + 1),
+            name: p.name,
+            sku: p.sku ?? '—',
+            unit: p.unitLabel,
+            stock: formatQty(p.stock),
+            counted: '________',
+            var: '________',
+          },
+          { alt: i % 2 === 1 },
         );
       });
     }
 
-    doc.moveDown();
-    doc.fontSize(8).fillColor('#444444').text(
+    drawFooterNote(
+      doc,
       'Notez la quantité comptée sur le terrain. Écart = compté − stock système. ' +
         'Pour enregistrer les ajustements dans le POS, utilisez une session de comptage dans l’application.',
     );
 
-    return new Promise<Buffer>((resolve, reject) => {
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
-      doc.end();
-    });
+    return collectPdfBuffer(doc);
   }
 }

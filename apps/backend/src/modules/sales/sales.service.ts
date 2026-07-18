@@ -476,53 +476,125 @@ export class SalesService {
     if (!sale) {
       throw new NotFoundException('Vente introuvable');
     }
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const PDFDocument = require('pdfkit');
-    const doc = new PDFDocument({ size: 'A4', margin: 40 });
-    const chunks: Buffer[] = [];
-    doc.on('data', (c: Buffer) => chunks.push(c));
 
-    const fmt = (n: unknown) => Number(n ?? 0).toFixed(2);
-    const fmtQty = (n: unknown) => Number(n ?? 0).toFixed(3);
-
-    doc.fontSize(18).text(`Vente #${sale.id}`, { align: 'left' });
-    doc.moveDown(0.5);
-    doc.fontSize(11).text(`Date: ${new Date(sale.createdAt).toLocaleString('fr-FR')}`);
-    doc.fontSize(11).text(`Statut: ${sale.status}`);
-    if (sale.clientName?.trim()) {
-      doc.fontSize(11).text(`Client: ${sale.clientName.trim()}`);
+    const firstProduct = sale.items?.[0]?.product as
+      | { companyId?: number; company?: { name?: string; logoUrl?: string | null } }
+      | undefined;
+    let companyName: string | null = firstProduct?.company?.name ?? null;
+    let logoUrl: string | null = firstProduct?.company?.logoUrl ?? null;
+    if ((!companyName || !logoUrl) && firstProduct?.companyId != null) {
+      const co = await this.prisma.company.findUnique({
+        where: { id: firstProduct.companyId },
+        select: { name: true, logoUrl: true },
+      });
+      companyName = co?.name ?? companyName;
+      logoUrl = co?.logoUrl ?? logoUrl;
     }
+
+    const {
+      collectPdfBuffer,
+      createPdfDoc,
+      drawKeyValueBlock,
+      drawReportHeader,
+      drawSectionTitle,
+      drawTableHeader,
+      drawTableRow,
+      generatedMetaLine,
+    } = await import('../../common/pdf/pdf-document');
+    const { formatDateTimeFr, formatMoneyHtg, formatQty } = await import(
+      '../../common/pdf/pdf-format'
+    );
+
+    const statusLabel =
+      sale.status === 'COMPLETED'
+        ? 'Complétée'
+        : sale.status === 'CANCELLED'
+          ? 'Annulée'
+          : sale.status === 'REFUNDED'
+            ? 'Remboursée'
+            : sale.status;
+
+    const paymentLabel = (method: string) => {
+      switch (method) {
+        case 'CASH':
+          return 'Espèces';
+        case 'CARD':
+          return 'Carte';
+        case 'MOBILE_MONEY':
+          return 'Mobile money';
+        case 'SPLIT':
+          return 'Mixte';
+        default:
+          return method;
+      }
+    };
+
+    const doc = createPdfDoc();
+    await drawReportHeader(doc, {
+      title: `Ticket de vente #${sale.id}`,
+      brand: { companyName, logoUrl },
+      metaLines: [generatedMetaLine()],
+    });
+
     const cashier =
       sale.user?.fullName?.trim() || sale.cashier || sale.user?.phone || '—';
-    doc.fontSize(11).text(`Caissier: ${cashier}`);
-    doc.moveDown();
+    drawKeyValueBlock(doc, [
+      { label: 'Date', value: formatDateTimeFr(sale.createdAt) },
+      { label: 'Statut', value: statusLabel },
+      { label: 'Client', value: sale.clientName?.trim() || '—' },
+      { label: 'Caissier', value: cashier },
+    ]);
 
-    doc.fontSize(12).text('Articles');
-    doc.moveDown(0.25);
-    for (const line of sale.items ?? []) {
-      const label = line.lineLabel ?? line.product?.name ?? 'Article';
-      doc
-        .fontSize(10)
-        .text(
-          `• ${label} — Qté ${fmtQty(line.quantity)} × ${fmt(line.unitPrice)} = ${fmt(line.subtotal)}`,
-        );
-    }
-    doc.moveDown();
-    doc.fontSize(12).text(`Total: ${fmt(sale.total)}`);
+    doc.moveDown(0.35);
+    drawSectionTitle(doc, 'Articles');
+
+    const cols = [
+      { key: 'label', label: 'Article', width: 250 },
+      { key: 'qty', label: 'Qté', width: 60, align: 'right' as const },
+      { key: 'unit', label: 'P.U.', width: 90, align: 'right' as const },
+      { key: 'sub', label: 'Sous-total', width: 110, align: 'right' as const },
+    ];
+    drawTableHeader(doc, cols);
+    (sale.items ?? []).forEach((line, i) => {
+      drawTableRow(
+        doc,
+        cols,
+        {
+          label: line.lineLabel ?? line.product?.name ?? 'Article',
+          qty: formatQty(line.quantity),
+          unit: formatMoneyHtg(line.unitPrice),
+          sub: formatMoneyHtg(line.subtotal),
+        },
+        { alt: i % 2 === 1 },
+      );
+    });
+
+    doc.moveDown(0.45);
+    drawKeyValueBlock(doc, [
+      { label: 'Total', value: formatMoneyHtg(sale.total), emphasize: true },
+    ]);
 
     if (sale.payments?.length) {
-      doc.moveDown();
-      doc.fontSize(12).text('Paiements');
-      doc.moveDown(0.25);
-      for (const p of sale.payments) {
-        doc.fontSize(10).text(`${p.method}: ${fmt(p.amount)}`);
-      }
+      doc.moveDown(0.35);
+      drawSectionTitle(doc, 'Paiements');
+      const payCols = [
+        { key: 'method', label: 'Mode', width: 300 },
+        { key: 'amount', label: 'Montant', width: 210, align: 'right' as const },
+      ];
+      drawTableHeader(doc, payCols);
+      sale.payments.forEach((p, i) => {
+        drawTableRow(
+          doc,
+          payCols,
+          {
+            method: paymentLabel(String(p.method)),
+            amount: formatMoneyHtg(p.amount),
+          },
+          { alt: i % 2 === 1 },
+        );
+      });
     }
 
-    return new Promise((resolve, reject) => {
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
-      doc.end();
-    });
+    return collectPdfBuffer(doc);
   }
 }

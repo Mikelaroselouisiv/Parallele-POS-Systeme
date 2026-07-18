@@ -71,7 +71,7 @@ export class SalesController {
   }
 
   @Get(':id/export/pdf')
-  @Roles('ADMIN', 'MANAGER', 'CASHIER')
+  @Roles('ADMIN', 'MANAGER', 'CASHIER', 'LIVREUR', 'ACCOUNTANT')
   async exportSalePdf(@Param('id', ParseIntPipe) id: number, @Res() res: Response) {
     const buffer = await this.salesService.buildSalePdf(id);
     res.setHeader('Content-Type', 'application/pdf');
@@ -80,7 +80,7 @@ export class SalesController {
   }
 
   @Get(':id')
-  @Roles('ADMIN', 'MANAGER', 'CASHIER')
+  @Roles('ADMIN', 'MANAGER', 'CASHIER', 'LIVREUR', 'ACCOUNTANT')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.salesService.findOne(id);
   }

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -125,6 +126,31 @@ export class RegisterSessionsService {
     });
     if (!register) {
       throw new NotFoundException('Comptoir introuvable');
+    }
+
+    const opener = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true, companyId: true, departmentId: true },
+    });
+    if (!opener) {
+      throw new NotFoundException('Utilisateur introuvable');
+    }
+    if (opener.role === 'CASHIER' || opener.role === 'LIVREUR') {
+      if (opener.companyId == null || opener.companyId !== dept.companyId) {
+        throw new ForbiddenException(
+          'Vous n’êtes pas affecté à cette entreprise pour ouvrir la caisse',
+        );
+      }
+      if (opener.departmentId != null && opener.departmentId !== dto.departmentId) {
+        throw new ForbiddenException(
+          'Vous n’êtes pas affecté à ce département pour ouvrir la caisse',
+        );
+      }
+      if (register.store.companyId !== opener.companyId) {
+        throw new ForbiddenException(
+          'Ce comptoir n’appartient pas à votre entreprise',
+        );
+      }
     }
 
     const existingUser = await this.getActiveSessionForUser(userId);

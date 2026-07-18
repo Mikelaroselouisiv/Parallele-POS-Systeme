@@ -85,12 +85,97 @@ export class DeliveriesService {
     return delivery;
   }
 
+  /**
+   * Garantit une fiche livraison pour une vente COMPLETED (API ou sync).
+   * Crée la fiche manquante et complète les lignes absentes.
+   */
+  async ensureForSale(saleId: number) {
+    const sale = await this.prisma.sale.findFirst({
+      where: { id: saleId, deletedAt: null },
+      include: {
+        items: {
+          where: { deletedAt: null },
+          include: {
+            product: { select: { companyId: true, departmentId: true } },
+          },
+          orderBy: { id: 'asc' },
+        },
+        delivery: { include: { items: true } },
+      },
+    });
+    if (!sale || sale.status !== 'COMPLETED' || !sale.items.length) {
+      return null;
+    }
+
+    const companyId = sale.items[0]?.product?.companyId;
+    if (companyId == null) return null;
+    const departmentId =
+      sale.items.find((it) => it.product.departmentId != null)?.product.departmentId ??
+      null;
+
+    if (!sale.delivery) {
+      return this.createFromSaleTx(this.prisma, {
+        saleId,
+        companyId,
+        departmentId,
+        items: sale.items.map((it) => ({
+          saleItemId: it.id,
+          quantityOrdered: Number(it.quantity),
+        })),
+      });
+    }
+
+    const existingSaleItemIds = new Set(sale.delivery.items.map((i) => i.saleItemId));
+    for (const it of sale.items) {
+      if (existingSaleItemIds.has(it.id)) continue;
+      await this.prisma.deliveryItem.create({
+        data: {
+          deliveryId: sale.delivery.id,
+          saleItemId: it.id,
+          quantityOrdered: Number(it.quantity),
+          quantityDelivered: 0,
+        },
+      });
+    }
+    return sale.delivery;
+  }
+
+  /** Backfill des fiches manquantes pour les ventes déjà encaissées. */
+  async ensureMissingForCompletedSales(limit = 500) {
+    const sales = await this.prisma.sale.findMany({
+      where: {
+        status: 'COMPLETED',
+        deletedAt: null,
+        delivery: null,
+      },
+      select: { id: true },
+      orderBy: { id: 'desc' },
+      take: Math.min(Math.max(limit, 1), 2000),
+    });
+    let created = 0;
+    for (const s of sales) {
+      const row = await this.ensureForSale(s.id);
+      if (row) created += 1;
+    }
+    return { scanned: sales.length, created };
+  }
+
   async list(
     user: ScopeUser,
-    filters: { companyId?: number; departmentId?: number; status?: string },
+    filters: {
+      companyId?: number;
+      departmentId?: number;
+      status?: string;
+      q?: string;
+      skip?: number;
+      take?: number;
+    },
   ) {
     const scope = this.resolveScope(user, filters);
     const status = this.parseStatus(filters.status);
+    const take = Math.min(Math.max(filters.take ?? 100, 1), 100);
+    const skip = Math.max(filters.skip ?? 0, 0);
+    const q = filters.q?.trim() ?? '';
 
     const where: Prisma.DeliveryWhereInput = {
       deletedAt: null,
@@ -100,13 +185,49 @@ export class DeliveriesService {
       ...(status ? { status } : {}),
     };
 
-    const rows = await this.prisma.delivery.findMany({
-      where,
-      include: deliveryInclude,
-      orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
-      take: 200,
-    });
-    return rows;
+    if (q) {
+      const asNum = Number.parseInt(q, 10);
+      const or: Prisma.DeliveryWhereInput[] = [
+        { sale: { clientName: { contains: q, mode: 'insensitive' } } },
+      ];
+      if (Number.isFinite(asNum) && String(asNum) === q) {
+        or.push({ saleId: asNum }, { id: asNum });
+      }
+      where.OR = or;
+    }
+
+    const orderBy: Prisma.DeliveryOrderByWithRelationInput[] = [
+      { status: 'asc' },
+      { createdAt: 'desc' },
+    ];
+
+    let [total, rows] = await Promise.all([
+      this.prisma.delivery.count({ where }),
+      this.prisma.delivery.findMany({
+        where,
+        include: deliveryInclude,
+        orderBy,
+        skip,
+        take,
+      }),
+    ]);
+
+    // Ventes arrivées via sync sans fiche : réparer puis recharger une fois.
+    if (total === 0 && !q) {
+      await this.ensureMissingForCompletedSales(500);
+      [total, rows] = await Promise.all([
+        this.prisma.delivery.count({ where }),
+        this.prisma.delivery.findMany({
+          where,
+          include: deliveryInclude,
+          orderBy,
+          skip,
+          take,
+        }),
+      ]);
+    }
+
+    return { items: rows, total, skip, take };
   }
 
   async findOne(id: number, user: ScopeUser) {
@@ -156,58 +277,67 @@ export class DeliveriesService {
       }
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      if (dto.note !== undefined) {
-        await tx.delivery.update({
+    return this.prisma.$transaction(
+      async (tx) => {
+        if (dto.note !== undefined) {
+          await tx.delivery.update({
+            where: { id },
+            data: { note: dto.note?.trim() || null },
+          });
+        }
+
+        for (const item of delivery.items) {
+          const nextQty = targets.get(item.saleItemId);
+          if (nextQty == null) continue;
+          const prevQty = Number(item.quantityDelivered);
+          const deltaSaleQty = nextQty - prevQty;
+
+          // Toujours écrire la qté livrée avant / avec le stock (même transaction).
+          if (Math.abs(nextQty - prevQty) > 0.0001) {
+            await tx.deliveryItem.update({
+              where: { id: item.id },
+              data: { quantityDelivered: nextQty },
+            });
+          }
+
+          if (Math.abs(deltaSaleQty) > 0.0001) {
+            await this.applyStockDeltaForDeliveryItem(tx, {
+              saleId: delivery.sale.id,
+              saleItemId: item.saleItemId,
+              deltaSaleQty,
+              userId: user.id,
+            });
+          }
+        }
+
+        const items = await tx.deliveryItem.findMany({ where: { deliveryId: id } });
+        const status = this.computeStatus(items);
+        const updated = await tx.delivery.update({
           where: { id },
-          data: { note: dto.note?.trim() || null },
+          data: {
+            status,
+            deliveredAt: status === DeliveryStatus.DELIVERED ? new Date() : null,
+            deliveredById:
+              status === DeliveryStatus.DELIVERED ? (user.id ?? null) : null,
+          },
+          include: deliveryInclude,
         });
-      }
 
-      for (const item of delivery.items) {
-        const nextQty = targets.get(item.saleItemId);
-        if (nextQty == null) continue;
-        const prevQty = Number(item.quantityDelivered);
-        const deltaSaleQty = nextQty - prevQty;
-        if (Math.abs(deltaSaleQty) > 0.0001) {
-          await this.applyStockDeltaForDeliveryItem(tx, {
-            saleId: delivery.sale.id,
-            saleItemId: item.saleItemId,
-            deltaSaleQty,
+        // Audit dans la même transaction (évite un journal « livré » si le commit échoue).
+        await tx.auditLog.create({
+          data: {
             userId: user.id,
-          });
-        }
-        if (Math.abs(nextQty - prevQty) > 0.0001) {
-          await tx.deliveryItem.update({
-            where: { id: item.id },
-            data: { quantityDelivered: nextQty },
-          });
-        }
-      }
+            action: 'DELIVERY_UPDATED',
+            entity: 'Delivery',
+            entityId: String(id),
+            metadata: { status: updated.status },
+          },
+        });
 
-      const items = await tx.deliveryItem.findMany({ where: { deliveryId: id } });
-      const status = this.computeStatus(items);
-      const updated = await tx.delivery.update({
-        where: { id },
-        data: {
-          status,
-          deliveredAt: status === DeliveryStatus.DELIVERED ? new Date() : null,
-          deliveredById:
-            status === DeliveryStatus.DELIVERED ? (user.id ?? null) : null,
-        },
-        include: deliveryInclude,
-      });
-
-      await this.auditService.log({
-        userId: user.id,
-        action: 'DELIVERY_UPDATED',
-        entity: 'Delivery',
-        entityId: String(id),
-        metadata: { status: updated.status },
-      });
-
-      return updated;
-    });
+        return updated;
+      },
+      { timeout: 30000, maxWait: 10000 },
+    );
   }
 
   /**
@@ -329,6 +459,8 @@ export class DeliveriesService {
     filters: { companyId?: number; departmentId?: number },
   ): { companyId?: number; departmentId?: number } {
     const role = user.role ?? '';
+    // Caissier / livreur : toutes les fiches de leur entreprise (tous départements).
+    // Le périmètre département s’applique à la caisse POS, pas aux livraisons.
     const locked = role === 'CASHIER' || role === 'LIVREUR';
 
     if (locked) {
@@ -337,7 +469,7 @@ export class DeliveriesService {
       }
       return {
         companyId: user.companyId,
-        departmentId: user.departmentId ?? undefined,
+        departmentId: filters.departmentId,
       };
     }
 
@@ -361,20 +493,13 @@ export class DeliveriesService {
   private assertCanAccess(
     user: ScopeUser,
     companyId: number,
-    departmentId: number | null,
+    _departmentId: number | null,
   ) {
     const role = user.role ?? '';
     if (role === 'ADMIN') return;
 
     if (role === 'CASHIER' || role === 'LIVREUR') {
-      if (user.companyId !== companyId) {
-        throw new ForbiddenException('Accès refusé');
-      }
-      if (
-        user.departmentId != null &&
-        departmentId != null &&
-        user.departmentId !== departmentId
-      ) {
+      if (user.companyId == null || user.companyId !== companyId) {
         throw new ForbiddenException('Accès refusé');
       }
       return;
