@@ -1242,9 +1242,8 @@ export function DashboardPage() {
                   <button
                     type="button"
                     className="btn btn-secondary"
-                    disabled={ledgerPdfLoading || companyId === '' || !ledgerDateFrom || !ledgerDateTo}
+                    disabled={ledgerPdfLoading || !ledgerDateFrom || !ledgerDateTo}
                     onClick={() => {
-                      if (companyId === '') return;
                       setLedgerPdfLoading(true);
                       void exportFinanceLedgerPdf({
                         companyId: Number(companyId),
