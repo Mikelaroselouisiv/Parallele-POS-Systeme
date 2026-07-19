@@ -88,7 +88,7 @@ export function DashboardPage() {
   const canManageFinance = isAdmin || isManager;
   const canCancelOrRefund = isAdmin || canPerm('sales.cancel');
 
-  const [tab, setTab] = useState<TabId>(canAccessDashboard ? 'synthese' : 'ventes');
+  const [tab, setTab] = useState<TabId>(isAdmin ? 'synthese' : 'ventes');
   const [ledgerPdfLoading, setLedgerPdfLoading] = useState(false);
   const [saleActionBusy, setSaleActionBusy] = useState(false);
 
@@ -780,7 +780,6 @@ export function DashboardPage() {
           ['achats', 'Achats & Dépenses'],
         ] as const)
       : ([
-          ['synthese', 'Synthèse'],
           ['ventes', 'Ventes'],
           ['achats', 'Achats & Dépenses'],
         ] as const)
