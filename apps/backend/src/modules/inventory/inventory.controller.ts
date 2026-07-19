@@ -227,14 +227,14 @@ export class InventoryController {
       doc.fontSize(11).fillColor('#64748b').text('Aucun produit.');
     } else {
       const cols = [
-        { key: 'company', label: 'Entreprise', width: 110 },
-        { key: 'dept', label: 'Département', width: 100 },
-        { key: 'name', label: 'Produit', width: 160 },
-        { key: 'sku', label: 'SKU', width: 70 },
-        { key: 'unit', label: 'Unité', width: 70 },
-        { key: 'stock', label: 'Stock', width: 60, align: 'right' as const },
-        { key: 'min', label: 'Min', width: 50, align: 'right' as const },
-        { key: 'status', label: 'Statut', width: 50, align: 'center' as const },
+        { key: 'company', label: 'Entreprise', width: 175 },
+        { key: 'dept', label: 'Département', width: 110 },
+        { key: 'name', label: 'Produit', width: 195 },
+        { key: 'sku', label: 'Réf.', width: 42 },
+        { key: 'unit', label: 'Unité', width: 55 },
+        { key: 'stock', label: 'Stock', width: 55, align: 'right' as const },
+        { key: 'min', label: 'Min', width: 40, align: 'right' as const },
+        { key: 'status', label: 'Statut', width: 48, align: 'center' as const },
       ];
       drawTableHeader(doc, cols);
       snapshot.items.forEach((item, i) => {
@@ -466,10 +466,10 @@ export class InventoryController {
       doc.fontSize(11).fillColor('#64748b').text('Aucun produit avec stock suivi dans ce département.');
     } else {
       const cols = [
-        { key: 'n', label: '#', width: 30, align: 'right' as const },
-        { key: 'name', label: 'Produit', width: 220 },
-        { key: 'sku', label: 'SKU', width: 80 },
-        { key: 'unit', label: 'Unité', width: 90 },
+        { key: 'n', label: '#', width: 28, align: 'right' as const },
+        { key: 'name', label: 'Produit', width: 260 },
+        { key: 'sku', label: 'Réf.', width: 48 },
+        { key: 'unit', label: 'Unité', width: 80 },
         { key: 'stock', label: 'Stock syst.', width: 80, align: 'right' as const },
         { key: 'counted', label: 'Compté', width: 80, align: 'center' as const },
         { key: 'var', label: 'Écart', width: 80, align: 'center' as const },

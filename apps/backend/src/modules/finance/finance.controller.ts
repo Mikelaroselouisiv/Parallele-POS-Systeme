@@ -1,8 +1,21 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Query,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
+import { Response } from 'express';
 import { GetUser } from '../../common/decorators/get-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { formatDateFr } from '../../common/pdf/pdf-format';
 import { CloseCashDto, CreateFinanceEntryDto } from './dto/finance-entry.dto';
 import { FinanceLedgerNature, FinanceService } from './finance.service';
 
@@ -64,6 +77,42 @@ export class FinanceController {
       skip: skipRaw ? Number.parseInt(skipRaw, 10) : undefined,
       take: takeRaw ? Number.parseInt(takeRaw, 10) : undefined,
     });
+  }
+
+  @Get('ledger/export/pdf')
+  @Roles('ADMIN', 'MANAGER', 'ACCOUNTANT')
+  async exportLedgerPdf(
+    @Res() res: Response,
+    @Query('companyId') companyIdRaw?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('nature') natureRaw?: string,
+  ) {
+    const companyId = companyIdRaw ? Number.parseInt(companyIdRaw, 10) : NaN;
+    if (!Number.isFinite(companyId) || companyId <= 0) {
+      throw new BadRequestException('companyId requis');
+    }
+    if (!dateFrom?.trim() || !dateTo?.trim()) {
+      throw new BadRequestException('dateFrom et dateTo requis');
+    }
+    const allowed: FinanceLedgerNature[] = ['all', 'purchase', 'sale', 'expense'];
+    const nature = (allowed.includes(natureRaw as FinanceLedgerNature)
+      ? natureRaw
+      : 'all') as FinanceLedgerNature;
+
+    const pdfBuffer = await this.financeService.exportLedgerPdf({
+      companyId,
+      dateFrom: dateFrom.trim(),
+      dateTo: dateTo.trim(),
+      nature,
+    });
+    const filenameDate = formatDateFr(new Date()).replace(/\//g, '-');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="journal_finance_${filenameDate}.pdf"`,
+    );
+    res.send(pdfBuffer);
   }
 
   @Post('entries')

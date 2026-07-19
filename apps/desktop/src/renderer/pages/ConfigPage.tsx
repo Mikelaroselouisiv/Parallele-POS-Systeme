@@ -5,6 +5,7 @@ import {
   createCompany,
   createDepartment,
   createPackagingUnit,
+  createRegister,
   createUser,
   createRole,
   deleteCompany,
@@ -19,6 +20,7 @@ import {
   getProducts,
   getUsers,
   listPermissions,
+  listRegisters,
   listRoles,
   patchPrinterSettings,
   updateCompany,
@@ -28,6 +30,7 @@ import {
   updateUser,
 } from '../services/api';
 import { buildTicketPreviewText } from '../utils/ticketPreview';
+import { formatRegisterCode } from '../utils/registerDisplay';
 import { formatRoleLabel } from '../utils/roleLabels';
 import { formatQuantity } from '../utils/formatQuantity';
 import { PasswordField } from '../components/PasswordField';
@@ -44,6 +47,7 @@ import type {
   Product,
   AppRoleRow,
   PermissionDefinition,
+  RegisterListItem,
   SessionUser,
 } from '../types/api';
 import axios from 'axios';
@@ -1369,13 +1373,31 @@ function CompanyDepartmentsPanel({
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [deptProducts, setDeptProducts] = useState<Product[]>([]);
   const [editDept, setEditDept] = useState<Department | null>(null);
+  const [registersByDept, setRegistersByDept] = useState<Record<number, RegisterListItem[]>>({});
+  const [newRegisterCode, setNewRegisterCode] = useState<Record<number, string>>({});
+  const [registerBusyDept, setRegisterBusyDept] = useState<number | null>(null);
+
+  async function loadDeptRegisters(deptId: number) {
+    try {
+      const regs = await listRegisters({ companyId, departmentId: deptId });
+      setRegistersByDept((prev) => ({
+        ...prev,
+        [deptId]: regs.filter((r) => r.departmentId === deptId),
+      }));
+    } catch {
+      setRegistersByDept((prev) => ({ ...prev, [deptId]: [] }));
+    }
+  }
 
   async function loadDepts() {
     setLoading(true);
     try {
-      setItems(await getDepartments(companyId));
+      const depts = await getDepartments(companyId);
+      setItems(depts);
+      await Promise.all(depts.map((d) => loadDeptRegisters(d.id)));
     } catch {
       setItems([]);
+      setRegistersByDept({});
     } finally {
       setLoading(false);
     }
@@ -1429,12 +1451,35 @@ function CompanyDepartmentsPanel({
     setExpandedId(deptId);
     setLoadingProducts(true);
     try {
-      const list = await getProducts(deptId);
-      setDeptProducts(list);
+      setDeptProducts(await getProducts(deptId));
     } catch {
       setDeptProducts([]);
     } finally {
       setLoadingProducts(false);
+    }
+  }
+
+  async function addRegister(deptId: number) {
+    if (!canEdit) return;
+    const code = (newRegisterCode[deptId] ?? '').trim();
+    if (!code) return;
+    setRegisterBusyDept(deptId);
+    try {
+      await createRegister({ companyId, departmentId: deptId, code });
+      setNewRegisterCode((prev) => ({ ...prev, [deptId]: '' }));
+      await loadDeptRegisters(deptId);
+    } catch (err) {
+      let msg = 'Impossible de créer la caisse.';
+      if (axios.isAxiosError(err) && err.response) {
+        const d = err.response.data;
+        if (typeof d === 'object' && d !== null && 'message' in d) {
+          const m = (d as { message: unknown }).message;
+          msg = Array.isArray(m) ? m.join(', ') : String(m);
+        }
+      }
+      setDeptErr(msg);
+    } finally {
+      setRegisterBusyDept(null);
     }
   }
 
@@ -1515,7 +1560,7 @@ function CompanyDepartmentsPanel({
                     onClick={() => void toggleProducts(d.id)}
                     aria-expanded={expandedId === d.id}
                   >
-                    {expandedId === d.id ? 'Fermer' : 'Produits'}
+                    {expandedId === d.id ? 'Fermer produits' : 'Produits'}
                   </button>
                   {canEdit ? (
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditDept(d)}>
@@ -1544,6 +1589,50 @@ function CompanyDepartmentsPanel({
                   ) : null}
                 </div>
               </div>
+
+              <div className="dept-card-body" style={{ borderTop: '1px solid #e2e8f0', marginTop: '0.65rem', paddingTop: '0.65rem' }}>
+                <p className="dept-card-body-title">Caisses de ce département</p>
+                {(registersByDept[d.id] ?? []).length === 0 ? (
+                  <p className="dept-hint">Aucune caisse. Ajoutez-en ci-dessous (ex. 1, 2…).</p>
+                ) : (
+                  <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 0.75rem' }}>
+                    {(registersByDept[d.id] ?? []).map((r) => (
+                      <li key={r.id} className="dept-hint" style={{ marginBottom: '0.25rem' }}>
+                        Caisse {formatRegisterCode(r.code)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {canEdit ? (
+                  <div className="dept-form-grid">
+                    <label>
+                      Nouveau n° / nom de caisse
+                      <input
+                        value={newRegisterCode[d.id] ?? ''}
+                        onChange={(e) =>
+                          setNewRegisterCode((prev) => ({ ...prev, [d.id]: e.target.value }))
+                        }
+                        placeholder="Ex. 1 ou Caisse bar"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            void addRegister(d.id);
+                          }
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      disabled={registerBusyDept === d.id}
+                      onClick={() => void addRegister(d.id)}
+                    >
+                      {registerBusyDept === d.id ? '…' : 'Ajouter caisse'}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+
               {expandedId === d.id ? (
                 <div className="dept-card-body">
                   <p className="dept-card-body-title">Produits rattachés à ce département</p>

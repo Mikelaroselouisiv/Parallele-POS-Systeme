@@ -187,7 +187,10 @@ function buildEscPosPayload(saleData, width = 58) {
     }
   }
 
+  // Double hauteur pour une meilleure lisibilité des noms / montants.
+  parts.push(Buffer.from([0x1d, 0x21, 0x01]));
   parts.push(Buffer.from(buildTicketText(textData, width), 'utf8'));
+  parts.push(Buffer.from([0x1d, 0x21, 0x00]));
   parts.push(Buffer.from([0x1d, 0x56, 0x00]));
   return Buffer.concat(parts);
 }
@@ -218,7 +221,7 @@ function buildReceiptHtml(saleData) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
     @page { margin: 0; size: auto; }
     html, body { margin: 0; padding: 0; }
-    body { font-family: 'Consolas','Courier New',monospace; font-size: 11px; padding: 2px 4px 8px 0; box-sizing: border-box; }
+    body { font-family: 'Consolas','Courier New',monospace; font-size: 13px; padding: 2px 4px 8px 0; box-sizing: border-box; }
     img.logo { max-width: ${width === 80 ? 280 : 200}px; max-height: 100px; display: block; margin: 0 0 6px 0; }
     pre.ticket { margin: 0; font-family: inherit; font-size: inherit; white-space: pre-wrap; text-align: left; }
   </style></head><body>${

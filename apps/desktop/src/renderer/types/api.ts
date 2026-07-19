@@ -139,7 +139,9 @@ export interface RegisterListItem {
   id: number;
   code: string;
   storeId: number;
+  departmentId?: number | null;
   store: { id: number; name: string; companyId: number | null };
+  department?: { id: number; name: string } | null;
 }
 
 export interface RegisterInventoryLinePayload {

@@ -16,6 +16,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import {
   CloseRegisterSessionDto,
+  CreateRegisterDto,
   OpenRegisterSessionDto,
 } from './dto/register-session.dto';
 import { RegisterSessionsService } from './register-sessions.service';
@@ -27,11 +28,23 @@ export class RegisterSessionsController {
 
   @Get('registers')
   @Roles('ADMIN', 'MANAGER', 'STOCK_MANAGER', 'CASHIER')
-  listRegisters(@Query('companyId') companyIdRaw?: string) {
+  listRegisters(
+    @Query('companyId') companyIdRaw?: string,
+    @Query('departmentId') departmentIdRaw?: string,
+  ) {
     const companyId = companyIdRaw ? Number.parseInt(companyIdRaw, 10) : undefined;
-    return this.registerSessionsService.listRegisters(
-      Number.isFinite(companyId) && companyId! > 0 ? companyId : undefined,
-    );
+    const departmentId = departmentIdRaw ? Number.parseInt(departmentIdRaw, 10) : undefined;
+    return this.registerSessionsService.listRegisters({
+      companyId: Number.isFinite(companyId) && companyId! > 0 ? companyId : undefined,
+      departmentId:
+        Number.isFinite(departmentId) && departmentId! > 0 ? departmentId : undefined,
+    });
+  }
+
+  @Post('registers')
+  @Roles('ADMIN', 'MANAGER')
+  createRegister(@Body() dto: CreateRegisterDto) {
+    return this.registerSessionsService.createRegister(dto);
   }
 
   @Post('registers/ensure-default')
@@ -54,22 +67,39 @@ export class RegisterSessionsController {
   @Roles('ADMIN', 'MANAGER')
   list(
     @Query('companyId') companyIdRaw?: string,
+    @Query('departmentId') departmentIdRaw?: string,
     @Query('registerId') registerIdRaw?: string,
+    @Query('openedById') openedByIdRaw?: string,
     @Query('status') statusRaw?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('sortBy') sortByRaw?: string,
+    @Query('sortDir') sortDirRaw?: string,
     @Query('take') takeRaw?: string,
   ) {
     const companyId = companyIdRaw ? Number.parseInt(companyIdRaw, 10) : undefined;
+    const departmentId = departmentIdRaw ? Number.parseInt(departmentIdRaw, 10) : undefined;
     const registerId = registerIdRaw ? Number.parseInt(registerIdRaw, 10) : undefined;
+    const openedById = openedByIdRaw ? Number.parseInt(openedByIdRaw, 10) : undefined;
     const take = takeRaw ? Number.parseInt(takeRaw, 10) : undefined;
     const status =
       statusRaw === 'OPEN' || statusRaw === 'CLOSED'
         ? (statusRaw as RegisterSessionStatus)
         : undefined;
+    const sortBy = sortByRaw === 'userName' ? 'userName' : 'openedAt';
+    const sortDir = sortDirRaw === 'asc' ? 'asc' : 'desc';
 
     return this.registerSessionsService.listSessions({
       companyId: Number.isFinite(companyId) && companyId! > 0 ? companyId : undefined,
+      departmentId:
+        Number.isFinite(departmentId) && departmentId! > 0 ? departmentId : undefined,
       registerId: Number.isFinite(registerId) && registerId! > 0 ? registerId : undefined,
+      openedById: Number.isFinite(openedById) && openedById! > 0 ? openedById : undefined,
       status,
+      dateFrom,
+      dateTo,
+      sortBy,
+      sortDir,
       take,
     });
   }

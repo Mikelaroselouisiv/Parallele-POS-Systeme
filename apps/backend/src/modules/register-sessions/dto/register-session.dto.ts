@@ -5,9 +5,28 @@ import {
   IsInt,
   IsNumber,
   IsOptional,
+  IsString,
   Min,
+  MinLength,
   ValidateNested,
 } from 'class-validator';
+
+export class CreateRegisterDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  companyId: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  departmentId: number;
+
+  /** Numéro ou libellé affiché (ex. « 1 », « Caisse 2 »). */
+  @IsString()
+  @MinLength(1)
+  code: string;
+}
 
 export class RegisterInventoryLineDto {
   @Type(() => Number)

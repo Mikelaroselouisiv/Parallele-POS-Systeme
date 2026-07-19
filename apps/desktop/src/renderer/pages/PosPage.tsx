@@ -28,6 +28,7 @@ import type {
   RegisterSessionDetail,
 } from '../types/api';
 import { RegisterStockCountForm } from '../components/RegisterStockCountForm';
+import { formatRegisterCode } from '../utils/registerDisplay';
 import { MoneyField } from '../components/MoneyField';
 import { useAuth } from '../context/AuthContext';
 import { useAutoClearMessage } from '../hooks/useAutoClearMessage';
@@ -164,7 +165,10 @@ export function PosPage() {
       setCountProducts([]);
     }
     if (resolvedCompanyId != null) {
-      let regs = await listRegisters(resolvedCompanyId);
+      let regs = await listRegisters({
+        companyId: resolvedCompanyId,
+        departmentId: deptId,
+      });
       if (regs.length === 0) {
         regs = [await ensureDefaultRegister(resolvedCompanyId)];
       }
@@ -626,7 +630,8 @@ export function PosPage() {
         <h1 style={{ margin: 0 }}>Caisse</h1>
         {registerSession ? (
           <span className="info-text" style={{ margin: 0 }}>
-            {registerSession.register.code} · {registerSession.department.name}
+            Caisse {formatRegisterCode(registerSession.register.code)} ·{' '}
+            {registerSession.department.name}
           </span>
         ) : null}
         <button
@@ -658,23 +663,26 @@ export function PosPage() {
           </div>
           {registerPanel === 'open' ? (
             <>
-              {registers.length > 1 ? (
-                <label style={{ display: 'block', marginTop: '0.75rem' }}>
-                  Comptoir
-                  <select
-                    value={selectedRegisterId}
-                    onChange={(e) =>
-                      setSelectedRegisterId(e.target.value === '' ? '' : Number(e.target.value))
-                    }
-                  >
-                    {registers.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.code}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
+              <label style={{ display: 'block', marginTop: '0.75rem' }}>
+                Numéro de caisse
+                <select
+                  value={selectedRegisterId}
+                  onChange={(e) =>
+                    setSelectedRegisterId(e.target.value === '' ? '' : Number(e.target.value))
+                  }
+                  required
+                >
+                  {registers.length === 0 ? (
+                    <option value="">Aucune caisse — créez-en dans Configuration</option>
+                  ) : null}
+                  {registers.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {formatRegisterCode(r.code)}
+                      {r.department?.name ? ` · ${r.department.name}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <RegisterStockCountForm
                 products={countProducts}
                 submitLabel="Ouvrir"

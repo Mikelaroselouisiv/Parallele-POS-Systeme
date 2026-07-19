@@ -526,14 +526,24 @@ export async function listAuditLogs(params?: {
   skip?: number;
   take?: number;
   entity?: string;
+  action?: string;
   userId?: number;
+  departmentId?: number;
+  companyId?: number;
+  dateFrom?: string;
+  dateTo?: string;
 }): Promise<{ items: AuditLogRow[]; total: number }> {
   const { data } = await api.get<{ items: AuditLogRow[]; total: number }>('/audit', {
     params: {
       skip: params?.skip ?? 0,
       take: params?.take ?? 50,
       entity: params?.entity,
+      action: params?.action,
       userId: params?.userId,
+      departmentId: params?.departmentId,
+      companyId: params?.companyId,
+      dateFrom: params?.dateFrom,
+      dateTo: params?.dateTo,
     },
   });
   return data;
@@ -649,10 +659,25 @@ export async function cancelInventorySession(id: number) {
   return data;
 }
 
-export async function listRegisters(companyId?: number): Promise<RegisterListItem[]> {
+export async function listRegisters(params?: {
+  companyId?: number;
+  departmentId?: number;
+}): Promise<RegisterListItem[]> {
   const { data } = await api.get<RegisterListItem[]>('/register-sessions/registers', {
-    params: companyId != null ? { companyId } : undefined,
+    params: {
+      companyId: params?.companyId ?? undefined,
+      departmentId: params?.departmentId ?? undefined,
+    },
   });
+  return data;
+}
+
+export async function createRegister(payload: {
+  companyId: number;
+  departmentId: number;
+  code: string;
+}): Promise<RegisterListItem> {
+  const { data } = await api.post<RegisterListItem>('/register-sessions/registers', payload);
   return data;
 }
 
@@ -670,15 +695,27 @@ export async function getActiveRegisterSession(): Promise<RegisterSessionDetail 
 
 export async function listRegisterSessions(params?: {
   companyId?: number;
+  departmentId?: number;
   registerId?: number;
+  openedById?: number;
   status?: 'OPEN' | 'CLOSED';
+  dateFrom?: string;
+  dateTo?: string;
+  sortBy?: 'openedAt' | 'userName';
+  sortDir?: 'asc' | 'desc';
   take?: number;
 }): Promise<RegisterSessionDetail[]> {
   const { data } = await api.get<RegisterSessionDetail[]>('/register-sessions', {
     params: {
       companyId: params?.companyId ?? undefined,
+      departmentId: params?.departmentId ?? undefined,
       registerId: params?.registerId ?? undefined,
+      openedById: params?.openedById ?? undefined,
       status: params?.status ?? undefined,
+      dateFrom: params?.dateFrom ?? undefined,
+      dateTo: params?.dateTo ?? undefined,
+      sortBy: params?.sortBy ?? undefined,
+      sortDir: params?.sortDir ?? undefined,
       take: params?.take ?? undefined,
     },
   });
@@ -856,6 +893,24 @@ export async function getFinanceLedger(params: {
       skip: params.skip ?? undefined,
       take: params.take ?? undefined,
     },
+  });
+  return data;
+}
+
+export async function exportFinanceLedgerPdf(params: {
+  companyId: number;
+  dateFrom: string;
+  dateTo: string;
+  nature?: 'all' | 'purchase' | 'sale' | 'expense';
+}): Promise<Blob> {
+  const { data } = await api.get<Blob>('/finance/ledger/export/pdf', {
+    params: {
+      companyId: params.companyId,
+      dateFrom: params.dateFrom,
+      dateTo: params.dateTo,
+      nature: params.nature ?? 'all',
+    },
+    responseType: 'blob',
   });
   return data;
 }

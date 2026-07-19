@@ -71,15 +71,15 @@ function compareProductsByCompanyDept(a: Product, b: Product): number {
 
 type TierDraft = { minQty: string; unitPrice: string };
 
-const DEFAULT_PRODUCT_CARD_COLOR = '#e0f2fe';
+const DEFAULT_PRODUCT_CARD_COLOR = '#0ea5e9';
 const PRODUCT_CARD_COLOR_PRESETS = [
-  '#e0f2fe',
-  '#dcfce7',
-  '#fef9c3',
-  '#fce7f3',
-  '#ede9fe',
-  '#ffedd5',
-  '#f1f5f9',
+  '#0ea5e9',
+  '#10b981',
+  '#f59e0b',
+  '#ec4899',
+  '#8b5cf6',
+  '#f97316',
+  '#ef4444',
 ];
 
 function ProductCardColorPicker({
@@ -330,9 +330,9 @@ export function StockPage() {
         ],
       });
       setName('');
-      setCardColor(DEFAULT_PRODUCT_CARD_COLOR);
       setPrice('');
       setVolumeTiers([]);
+      // Entreprise, département et couleur restent pour enchaîner les créations.
       setMsg('Produit créé (stock initial à 0 — ajustez le stock après réception).');
       await load();
     } catch (err) {
@@ -441,137 +441,136 @@ export function StockPage() {
       {tab === 'catalog' ? (
         <>
       <section className="catalog-layout">
-        <div className="card catalog-accordion">
+        <div className="catalog-add-head">
+          <h2>Catalogue</h2>
           <button
             type="button"
-            className="catalog-accordion-trigger"
-            id="catalog-add-product-heading"
+            className="btn btn-primary btn-sm"
             aria-expanded={addProductOpen}
             aria-controls="catalog-add-product-panel"
             onClick={() => setAddProductOpen((o) => !o)}
           >
-            <span className="catalog-accordion-title">Ajouter un produit</span>
-            <span className={`catalog-accordion-chevron${addProductOpen ? ' is-open' : ''}`} aria-hidden />
+            {addProductOpen ? 'Fermer' : '+ Ajouter un produit'}
           </button>
-          {addProductOpen ? (
-            <div
-              className="catalog-accordion-panel"
-              id="catalog-add-product-panel"
-              role="region"
-              aria-labelledby="catalog-add-product-heading"
-            >
-              <form className="form-grid catalog-add-form" onSubmit={(e) => void onCreate(e)}>
-                <label>
-                  Entreprise
-                  <select
-                    value={companyId === '' ? '' : String(companyId)}
-                    onChange={(e) => {
-                      setCompanyId(e.target.value ? Number(e.target.value) : '');
-                      setDepartmentId('');
-                    }}
-                  >
-                    {companies.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Département
-                  <select
-                    value={departmentId === '' ? '' : String(departmentId)}
-                    onChange={(e) => setDepartmentId(e.target.value ? Number(e.target.value) : '')}
-                  >
-                    <option value="">— Aucun</option>
-                    {departments.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Nom
-                  <input value={name} onChange={(e) => setName(e.target.value)} required />
-                </label>
-                <ProductCardColorPicker value={cardColor} onChange={setCardColor} />
-                <label>
-                  Conditionnement
-                  <select
-                    value={packId === '' ? '' : String(packId)}
-                    onChange={(e) => setPackId(e.target.value ? Number(e.target.value) : '')}
-                  >
-                    {packaging.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.label} ({u.code})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <MoneyField
-                  label="Prix unitaire"
-                  min={0}
-                  step={0.01}
-                  value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                  required
-                />
-                <div className="volume-tiers-block catalog-volume-tiers">
-                  {volumeTiers.map((row, idx) => (
-                    <div key={idx} className="volume-tier-row">
-                      <label>
-                        À partir de (qté)
-                        <input
-                          type="number"
-                          min={0.0001}
-                          step="any"
-                          value={row.minQty}
-                          onChange={(e) => {
-                            const next = [...volumeTiers];
-                            next[idx] = { ...next[idx], minQty: e.target.value };
-                            setVolumeTiers(next);
-                          }}
-                        />
-                      </label>
-                      <MoneyField
-                        label="Prix unitaire"
-                        min={0}
-                        step={0.01}
-                        value={row.unitPrice}
+        </div>
+        {addProductOpen ? (
+          <div
+            className="card catalog-add-card"
+            id="catalog-add-product-panel"
+            role="region"
+            aria-label="Nouveau produit"
+          >
+            <form className="form-grid catalog-add-form" onSubmit={(e) => void onCreate(e)}>
+              <label>
+                Entreprise
+                <select
+                  value={companyId === '' ? '' : String(companyId)}
+                  onChange={(e) => {
+                    setCompanyId(e.target.value ? Number(e.target.value) : '');
+                    setDepartmentId('');
+                  }}
+                >
+                  {companies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Département
+                <select
+                  value={departmentId === '' ? '' : String(departmentId)}
+                  onChange={(e) => setDepartmentId(e.target.value ? Number(e.target.value) : '')}
+                >
+                  <option value="">— Aucun</option>
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Nom
+                <input value={name} onChange={(e) => setName(e.target.value)} required />
+              </label>
+              <ProductCardColorPicker value={cardColor} onChange={setCardColor} />
+              <label>
+                Conditionnement
+                <select
+                  value={packId === '' ? '' : String(packId)}
+                  onChange={(e) => setPackId(e.target.value ? Number(e.target.value) : '')}
+                >
+                  {packaging.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.label} ({u.code})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <MoneyField
+                label="Prix unitaire"
+                min={0}
+                step={0.01}
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                required
+              />
+              <div className="volume-tiers-block catalog-volume-tiers">
+                {volumeTiers.map((row, idx) => (
+                  <div key={idx} className="volume-tier-row">
+                    <label>
+                      À partir de (qté)
+                      <input
+                        type="number"
+                        min={0.0001}
+                        step="any"
+                        value={row.minQty}
                         onChange={(e) => {
                           const next = [...volumeTiers];
-                          next[idx] = { ...next[idx], unitPrice: e.target.value };
+                          next[idx] = { ...next[idx], minQty: e.target.value };
                           setVolumeTiers(next);
                         }}
                       />
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        onClick={() => setVolumeTiers(volumeTiers.filter((_, i) => i !== idx))}
-                      >
-                        Retirer
-                      </button>
-                    </div>
-                  ))}
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => setVolumeTiers([...volumeTiers, { minQty: '', unitPrice: '' }])}
-                  >
-                    + Palier
-                  </button>
-                </div>
-                <div className="catalog-add-submit">
-                  <button type="submit" className="btn btn-primary">
-                    Créer
-                  </button>
-                </div>
-              </form>
-              {msg ? <p className="info-text catalog-add-msg">{msg}</p> : null}
-            </div>
-          ) : null}
-        </div>
+                    </label>
+                    <MoneyField
+                      label="Prix unitaire"
+                      min={0}
+                      step={0.01}
+                      value={row.unitPrice}
+                      onChange={(e) => {
+                        const next = [...volumeTiers];
+                        next[idx] = { ...next[idx], unitPrice: e.target.value };
+                        setVolumeTiers(next);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setVolumeTiers(volumeTiers.filter((_, i) => i !== idx))}
+                    >
+                      Retirer
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setVolumeTiers([...volumeTiers, { minQty: '', unitPrice: '' }])}
+                >
+                  + Palier
+                </button>
+              </div>
+              <div className="catalog-add-submit">
+                <button type="submit" className="btn btn-primary">
+                  Créer
+                </button>
+              </div>
+            </form>
+            {msg ? <p className="info-text catalog-add-msg">{msg}</p> : null}
+          </div>
+        ) : null}
 
         <div className="card catalog-list-card">
           <h2>

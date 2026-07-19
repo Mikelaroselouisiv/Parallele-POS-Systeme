@@ -31,6 +31,7 @@ export const ENTITY_FK_MAP: Partial<Record<SyncEntityName, SyncFkRef[]>> = {
   ],
   Register: [
     { uuidField: 'storeUuid', idField: 'storeId', parent: 'Store', required: true },
+    { uuidField: 'departmentUuid', idField: 'departmentId', parent: 'Department', required: false },
   ],
   Product: [
     { uuidField: 'companyUuid', idField: 'companyId', parent: 'Company', required: true },

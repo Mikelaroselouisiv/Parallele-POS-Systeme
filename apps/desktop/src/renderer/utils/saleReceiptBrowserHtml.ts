@@ -56,12 +56,12 @@ export function buildSaleDetailPrintHtml(sale: Sale, companyName?: string): stri
   <title>Vente #${sale.id}</title>
   <style>
     body { font-family: system-ui, sans-serif; padding: 1.2rem; color: #111; }
-    h1 { font-size: 1.1rem; margin: 0 0 0.5rem; }
-    .meta { font-size: 0.9rem; color: #444; margin-bottom: 1rem; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-    th, td { border-bottom: 1px solid #e5e7eb; padding: 0.35rem 0.25rem; text-align: left; }
+    h1 { font-size: 1.35rem; margin: 0 0 0.5rem; }
+    .meta { font-size: 1.05rem; color: #444; margin-bottom: 1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 1.05rem; }
+    th, td { border-bottom: 1px solid #e5e7eb; padding: 0.4rem 0.3rem; text-align: left; }
     th { font-weight: 700; }
-    .total { font-weight: 800; font-size: 1.05rem; margin-top: 0.75rem; text-align: right; }
+    .total { font-weight: 800; font-size: 1.2rem; margin-top: 0.75rem; text-align: right; }
     @media print { body { padding: 0; } }
   </style>
 </head>

@@ -12,7 +12,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import type { CloseRegisterSessionDto, OpenRegisterSessionDto } from './dto/register-session.dto';
 
 const SESSION_INCLUDE = {
-  register: { include: { store: true } },
+  register: { include: { store: true, department: true } },
   department: { include: { company: true } },
   openedBy: { select: USER_ATTRIBUTION_SELECT },
   closedBy: { select: USER_ATTRIBUTION_SELECT },
@@ -28,6 +28,11 @@ const SESSION_INCLUDE = {
   },
 } as const;
 
+const REGISTER_INCLUDE = {
+  store: true,
+  department: true,
+} as const;
+
 @Injectable()
 export class RegisterSessionsService {
   constructor(
@@ -36,29 +41,78 @@ export class RegisterSessionsService {
     private readonly auditService: AuditService,
   ) {}
 
-  listRegisters(companyId?: number) {
+  listRegisters(filters?: { companyId?: number; departmentId?: number }) {
+    const companyId = filters?.companyId;
+    const departmentId = filters?.departmentId;
     return this.prisma.register.findMany({
-      where: companyId
-        ? { store: { companyId }, deletedAt: null }
-        : { deletedAt: null },
-      include: { store: true },
+      where: {
+        deletedAt: null,
+        ...(companyId ? { store: { companyId } } : {}),
+        ...(departmentId
+          ? {
+              OR: [{ departmentId }, { departmentId: null }],
+            }
+          : {}),
+      },
+      include: REGISTER_INCLUDE,
       orderBy: { code: 'asc' },
+    });
+  }
+
+  private async ensureCompanyStore(companyId: number) {
+    const existing = await this.prisma.store.findFirst({
+      where: { companyId, deletedAt: null },
+      orderBy: { id: 'asc' },
+    });
+    if (existing) return existing;
+    return this.prisma.store.create({
+      data: { companyId, name: 'Principal', address: '' },
     });
   }
 
   async ensureDefaultRegister(companyId: number) {
     const existing = await this.prisma.register.findFirst({
       where: { store: { companyId }, deletedAt: null },
-      include: { store: true },
+      include: REGISTER_INCLUDE,
     });
     if (existing) return existing;
 
-    const store = await this.prisma.store.create({
-      data: { companyId, name: 'Principal', address: '' },
-    });
+    const store = await this.ensureCompanyStore(companyId);
     return this.prisma.register.create({
       data: { storeId: store.id, code: `CAISSE-${companyId}` },
-      include: { store: true },
+      include: REGISTER_INCLUDE,
+    });
+  }
+
+  async createRegister(input: { companyId: number; departmentId: number; code: string }) {
+    const dept = await this.prisma.department.findFirst({
+      where: { id: input.departmentId, companyId: input.companyId, deletedAt: null },
+    });
+    if (!dept) {
+      throw new NotFoundException('Département introuvable pour cette entreprise');
+    }
+
+    const raw = input.code.trim();
+    if (!raw) {
+      throw new BadRequestException('Indiquez un numéro ou un nom de caisse.');
+    }
+
+    const uniqueCode = `D${input.departmentId}-${raw}`;
+    const clash = await this.prisma.register.findFirst({
+      where: { code: uniqueCode, deletedAt: null },
+    });
+    if (clash) {
+      throw new BadRequestException('Une caisse avec ce numéro existe déjà pour ce département.');
+    }
+
+    const store = await this.ensureCompanyStore(input.companyId);
+    return this.prisma.register.create({
+      data: {
+        storeId: store.id,
+        departmentId: input.departmentId,
+        code: uniqueCode,
+      },
+      include: REGISTER_INCLUDE,
     });
   }
 
@@ -79,28 +133,66 @@ export class RegisterSessionsService {
 
   listSessions(filters?: {
     companyId?: number;
+    departmentId?: number;
     registerId?: number;
+    openedById?: number;
     status?: RegisterSessionStatus;
+    dateFrom?: string;
+    dateTo?: string;
+    sortBy?: 'openedAt' | 'userName';
+    sortDir?: 'asc' | 'desc';
     take?: number;
   }) {
-    const take = Math.min(100, Math.max(1, filters?.take ?? 50));
+    const take = Math.min(200, Math.max(1, filters?.take ?? 50));
     const where: {
       deletedAt: null;
       registerId?: number;
+      openedById?: number;
       status?: RegisterSessionStatus;
+      departmentId?: number;
       department?: { companyId: number };
+      openedAt?: { gte?: Date; lte?: Date };
     } = { deletedAt: null };
 
     if (filters?.registerId) where.registerId = filters.registerId;
+    if (filters?.openedById) where.openedById = filters.openedById;
     if (filters?.status) where.status = filters.status;
+    if (filters?.departmentId) where.departmentId = filters.departmentId;
     if (filters?.companyId) {
       where.department = { companyId: filters.companyId };
+    }
+
+    const openedAt: { gte?: Date; lte?: Date } = {};
+    if (filters?.dateFrom?.trim()) {
+      const d = new Date(filters.dateFrom.trim());
+      if (Number.isFinite(d.getTime())) {
+        d.setHours(0, 0, 0, 0);
+        openedAt.gte = d;
+      }
+    }
+    if (filters?.dateTo?.trim()) {
+      const d = new Date(filters.dateTo.trim());
+      if (Number.isFinite(d.getTime())) {
+        d.setHours(23, 59, 59, 999);
+        openedAt.lte = d;
+      }
+    }
+    if (openedAt.gte || openedAt.lte) where.openedAt = openedAt;
+
+    const dir = filters?.sortDir === 'asc' ? 'asc' : 'desc';
+    if (filters?.sortBy === 'userName') {
+      return this.prisma.registerSession.findMany({
+        where,
+        include: SESSION_INCLUDE,
+        orderBy: [{ openedBy: { fullName: dir } }, { openedAt: 'desc' }],
+        take,
+      });
     }
 
     return this.prisma.registerSession.findMany({
       where,
       include: SESSION_INCLUDE,
-      orderBy: { openedAt: 'desc' },
+      orderBy: { openedAt: dir },
       take,
     });
   }
@@ -124,8 +216,14 @@ export class RegisterSessionsService {
       where: { id: dto.registerId },
       include: { store: true },
     });
-    if (!register) {
+    if (!register || register.deletedAt) {
       throw new NotFoundException('Comptoir introuvable');
+    }
+    if (register.store.companyId !== dept.companyId) {
+      throw new BadRequestException('Cette caisse n’appartient pas à l’entreprise du département.');
+    }
+    if (register.departmentId != null && register.departmentId !== dto.departmentId) {
+      throw new BadRequestException('Cette caisse n’est pas rattachée à ce département.');
     }
 
     const opener = await this.prisma.user.findUnique({
@@ -203,7 +301,7 @@ export class RegisterSessionsService {
       throw new BadRequestException('Cette caisse est déjà fermée.');
     }
     if (session.openedById !== userId) {
-      throw new BadRequestException('Seul le caissier ayant ouvert peut fermer.');
+      throw new BadRequestException('Seul l’utilisateur ayant ouvert la caisse peut la fermer.');
     }
 
     const closingInventory = await this.inventoryService.createRegisterInventorySession(

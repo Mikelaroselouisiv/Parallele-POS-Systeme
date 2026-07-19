@@ -90,6 +90,9 @@ export function AppLayout() {
         </nav>
         <div className="app-sidebar-footer">
           <div className="app-user">
+            <div className="app-user-name">
+              {user?.fullName?.trim() || 'Utilisateur'}
+            </div>
             <div className="app-user-email">{user?.phone}</div>
             <div className="app-user-role">{formatRoleLabel(user?.role, user?.roleLabel)}</div>
           </div>

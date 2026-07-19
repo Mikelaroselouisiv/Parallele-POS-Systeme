@@ -1,5 +1,6 @@
 import type { RegisterSessionDetail } from '../types/api';
 import { formatQuantity } from '../utils/formatQuantity';
+import { formatRegisterCode } from '../utils/registerDisplay';
 import { formatUserLabel } from '../utils/userAttribution';
 import { formatMoney } from '../utils/currency';
 
@@ -37,7 +38,8 @@ export function RegisterSessionModal({ session, onClose }: Props) {
           style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}
         >
           <h2 style={{ margin: 0 }}>
-            Session {session.register.code} · {session.status === 'OPEN' ? 'Ouverte' : 'Fermée'}
+            Session {formatRegisterCode(session.register.code)} ·{' '}
+            {session.status === 'OPEN' ? 'Ouverte' : 'Fermée'}
           </h2>
           <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
             ×

@@ -183,7 +183,8 @@ export class InventoryService {
     const where = {
       trackStock: true,
       isService: false,
-      stock: { lte: threshold },
+      // Stock bas = strictement sous le seuil (ex. seuil 5 → 0 à 4).
+      stock: { lt: threshold },
       ...(companyId ? { department: { companyId } } : {}),
     };
 

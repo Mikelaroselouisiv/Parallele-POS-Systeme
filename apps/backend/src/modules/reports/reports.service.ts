@@ -898,8 +898,8 @@ export class ReportsService {
     ]);
 
     doc.moveDown(0.45);
-    drawSectionTitle(doc, 'Top 25 articles par chiffre d’affaires');
-    const sorted = [...rows].sort((a, b) => b.totalSubtotal - a.totalSubtotal).slice(0, 25);
+    drawSectionTitle(doc, 'Top 25 articles par unités vendues');
+    const sorted = [...rows].sort((a, b) => b.quantity - a.quantity).slice(0, 25);
     if (sorted.length === 0) {
       doc.fontSize(10).fillColor('#64748b').text('Aucune vente sur cette période.');
     } else {

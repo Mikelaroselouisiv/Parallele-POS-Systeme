@@ -118,7 +118,7 @@ export function DashboardSyntheseTab({ companies, onMessage }: Props) {
 
   const [productQuery, setProductQuery] = useState('');
 
-  const [sortKey, setSortKey] = useState<'productName' | 'totalSubtotal' | 'quantity'>('totalSubtotal');
+  const [sortKey, setSortKey] = useState<'productName' | 'totalSubtotal' | 'quantity'>('quantity');
 
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -277,13 +277,13 @@ export function DashboardSyntheseTab({ companies, onMessage }: Props) {
 
   const pieSlices = useMemo(() => {
 
-    const sorted = [...rows].sort((a, b) => b.totalSubtotal - a.totalSubtotal).slice(0, 8);
+    const sorted = [...rows].sort((a, b) => b.quantity - a.quantity).slice(0, 8);
 
     return sorted.map((r) => ({
 
       name: r.productName.length > 28 ? `${r.productName.slice(0, 26)}…` : r.productName,
 
-      value: r.totalSubtotal,
+      value: r.quantity,
 
     }));
 
@@ -702,7 +702,7 @@ export function DashboardSyntheseTab({ companies, onMessage }: Props) {
 
             <div className="card synthese-chart-card">
 
-              <h3 className="synthese-chart-title">Top articles (CA)</h3>
+              <h3 className="synthese-chart-title">Top articles (unités)</h3>
 
               <div className="synthese-chart-area">
 
@@ -748,7 +748,7 @@ export function DashboardSyntheseTab({ companies, onMessage }: Props) {
 
                       </Pie>
 
-                      <Tooltip formatter={(v: number) => formatMoney(v)} />
+                      <Tooltip formatter={(v: number) => formatQuantity(v)} />
 
                       <Legend layout="horizontal" verticalAlign="bottom" wrapperStyle={{ fontSize: 11 }} />
 
@@ -816,9 +816,9 @@ export function DashboardSyntheseTab({ companies, onMessage }: Props) {
 
                 >
 
-                  <option value="totalSubtotal">Montant (CA)</option>
+                  <option value="quantity">Quantité (unités)</option>
 
-                  <option value="quantity">Quantité</option>
+                  <option value="totalSubtotal">Montant (CA)</option>
 
                   <option value="productName">Nom</option>
 

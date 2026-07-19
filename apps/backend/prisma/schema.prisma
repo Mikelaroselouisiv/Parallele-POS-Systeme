@@ -130,6 +130,7 @@ model Department {
   printerProfile DepartmentPrinterProfile?
   inventorySessions InventorySession[]
   registerSessions  RegisterSession[]
+  registers         Register[]
   purchaseOrders    PurchaseOrder[]
   goodsReceipts     GoodsReceipt[]
   deliveries        Delivery[]
@@ -174,16 +175,21 @@ model Store {
 }
 
 model Register {
-  id        Int      @id @default(autoincrement())
-  uuid      String   @unique @default(uuid())
-  code      String   @unique
-  storeId   Int
-  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  sales     Sale[]
-  sessions  RegisterSession[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
+  id           Int         @id @default(autoincrement())
+  uuid         String      @unique @default(uuid())
+  code         String      @unique
+  storeId      Int
+  store        Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  /// Caisse rattachée à un département (optionnel pour les anciennes caisses).
+  departmentId Int?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  sales        Sale[]
+  sessions     RegisterSession[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  deletedAt    DateTime?
+
+  @@index([departmentId])
 }
 
 /// Session de travail caisse : ouverture (inventaire + fond) → ventes → fermeture (inventaire + espèces).

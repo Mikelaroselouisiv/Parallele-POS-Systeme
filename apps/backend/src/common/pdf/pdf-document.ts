@@ -126,17 +126,19 @@ export async function drawReportHeader(
   }
 
   const company = opts.brand?.companyName?.trim() || 'POS Frères Baziles';
+  const headerTextW = contentW - (textLeft - margin);
   doc
     .fillColor(COLORS.accent)
     .font('Helvetica-Bold')
-    .fontSize(11)
-    .text(company, textLeft, top, { width: contentW - (textLeft - margin), lineBreak: false });
+    .fontSize(13)
+    .text(company, textLeft, top, { width: headerTextW, lineGap: 1 });
 
+  const titleY = Math.max(doc.y + 4, top + 18);
   doc
     .fillColor(COLORS.ink)
     .font('Helvetica-Bold')
-    .fontSize(16)
-    .text(opts.title, textLeft, top + 16, { width: contentW - (textLeft - margin) });
+    .fontSize(17)
+    .text(opts.title, textLeft, titleY, { width: headerTextW });
 
   let y = Math.max(top + logoSize, doc.y) + 8;
 
@@ -144,7 +146,7 @@ export async function drawReportHeader(
     doc
       .fillColor(COLORS.muted)
       .font('Helvetica')
-      .fontSize(9)
+      .fontSize(10)
       .text(opts.brand.subtitle.trim(), margin, y, { width: contentW });
     y = doc.y + 2;
   }
@@ -154,7 +156,7 @@ export async function drawReportHeader(
     doc
       .fillColor(COLORS.muted)
       .font('Helvetica')
-      .fontSize(9)
+      .fontSize(10)
       .text(line.trim(), margin, y, { width: contentW });
     y = doc.y + 1;
   }
@@ -176,7 +178,7 @@ export async function drawReportHeader(
 
   y += 14;
   doc.y = y;
-  doc.fillColor(COLORS.ink).font('Helvetica').fontSize(10);
+  doc.fillColor(COLORS.ink).font('Helvetica').fontSize(11);
   return y;
 }
 
@@ -185,7 +187,7 @@ export function drawSectionTitle(doc: PdfDoc, title: string) {
   doc
     .fillColor(COLORS.ink)
     .font('Helvetica-Bold')
-    .fontSize(11)
+    .fontSize(12)
     .text(title, { underline: false });
   const y = doc.y + 2;
   doc
@@ -206,18 +208,18 @@ export type PdfColumn = {
 };
 
 export function drawTableHeader(doc: PdfDoc, columns: PdfColumn[]) {
-  ensureSpace(doc, 22);
+  ensureSpace(doc, 24);
   const margin = doc.page.margins.left;
   const y = doc.y;
-  const h = 18;
+  const h = 20;
   const totalW = columns.reduce((s, c) => s + c.width, 0);
 
   doc.rect(margin, y, totalW, h).fill(COLORS.headerBg);
-  doc.fillColor(COLORS.ink).font('Helvetica-Bold').fontSize(8);
+  doc.fillColor(COLORS.ink).font('Helvetica-Bold').fontSize(10);
 
   let x = margin;
   for (const col of columns) {
-    doc.text(col.label, x + 4, y + 5, {
+    doc.text(col.label, x + 4, y + 5.5, {
       width: col.width - 8,
       align: col.align ?? 'left',
       lineBreak: false,
@@ -234,11 +236,11 @@ export function drawTableRow(
   values: Record<string, string>,
   opts?: { alt?: boolean; fontSize?: number },
 ) {
-  ensureSpace(doc, 16);
+  ensureSpace(doc, 18);
   const margin = doc.page.margins.left;
   const y = doc.y;
-  const fontSize = opts?.fontSize ?? 8;
-  const h = 15;
+  const fontSize = opts?.fontSize ?? 10;
+  const h = 17;
   const totalW = columns.reduce((s, c) => s + c.width, 0);
 
   if (opts?.alt) {
@@ -249,7 +251,7 @@ export function drawTableRow(
   let x = margin;
   for (const col of columns) {
     const text = values[col.key] ?? '';
-    doc.text(text, x + 4, y + 3.5, {
+    doc.text(text, x + 4, y + 4, {
       width: col.width - 8,
       align: col.align ?? 'left',
       lineBreak: false,
@@ -275,12 +277,12 @@ export function drawKeyValueBlock(
     doc
       .fillColor(COLORS.muted)
       .font('Helvetica')
-      .fontSize(9)
+      .fontSize(10)
       .text(row.label, margin, y, { width: labelW });
     doc
       .fillColor(COLORS.ink)
       .font(row.emphasize ? 'Helvetica-Bold' : 'Helvetica')
-      .fontSize(row.emphasize ? 11 : 9)
+      .fontSize(row.emphasize ? 12 : 10)
       .text(row.value, margin + labelW, y, { width: valueW, align: 'right' });
     doc.y = y + (row.emphasize ? 18 : 15);
   }
@@ -293,7 +295,7 @@ export function drawFooterNote(doc: PdfDoc, note: string) {
   doc
     .fillColor(COLORS.muted)
     .font('Helvetica')
-    .fontSize(8)
+    .fontSize(9)
     .text(note, { align: 'left', width: doc.page.width - doc.page.margins.left - doc.page.margins.right });
   doc.fillColor(COLORS.ink);
 }

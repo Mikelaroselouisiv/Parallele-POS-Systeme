@@ -1,5 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { FinanceType, GoodsReceiptStatus, Prisma } from '@prisma/client';
+import {
+  collectPdfBuffer,
+  createPdfDoc,
+  drawReportHeader,
+  drawTableHeader,
+  drawTableRow,
+  generatedMetaLine,
+} from '../../common/pdf/pdf-document';
+import { formatDateFr, formatDateTimeFr, formatMoneyHtg } from '../../common/pdf/pdf-format';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { PurchasingService } from '../purchasing/purchasing.service';
@@ -187,6 +196,79 @@ export class FinanceService {
     const total = rows.length;
     const page = rows.slice(skip, skip + take);
     return { items: page, total };
+  }
+
+  async exportLedgerPdf(opts: {
+    companyId: number;
+    dateFrom: string;
+    dateTo: string;
+    nature?: FinanceLedgerNature;
+  }): Promise<Buffer> {
+    const company = await this.prisma.company.findUnique({
+      where: { id: opts.companyId },
+      select: { name: true, logoUrl: true },
+    });
+    if (!company) throw new NotFoundException('Entreprise introuvable');
+
+    const { items } = await this.ledger({
+      companyId: opts.companyId,
+      dateFrom: opts.dateFrom,
+      dateTo: opts.dateTo,
+      nature: opts.nature ?? 'all',
+      skip: 0,
+      take: 200,
+    });
+
+    const natureLabel =
+      opts.nature === 'purchase'
+        ? 'Achats'
+        : opts.nature === 'sale'
+          ? 'Ventes'
+          : opts.nature === 'expense'
+            ? 'Dépenses'
+            : 'Toutes natures';
+
+    const doc = createPdfDoc({ landscape: true });
+    await drawReportHeader(doc, {
+      title: 'Journal achats / ventes / dépenses',
+      brand: { companyName: company.name, logoUrl: company.logoUrl },
+      metaLines: [
+        `Période : ${formatDateFr(opts.dateFrom)} → ${formatDateFr(opts.dateTo)}`,
+        `Nature : ${natureLabel} · ${items.length} ligne${items.length > 1 ? 's' : ''}`,
+        generatedMetaLine(),
+      ],
+    });
+
+    if (items.length === 0) {
+      doc.fontSize(11).fillColor('#64748b').text('Aucune ligne sur cette période.');
+    } else {
+      const cols = [
+        { key: 'date', label: 'Date', width: 110 },
+        { key: 'kind', label: 'Nature', width: 80 },
+        { key: 'desc', label: 'Libellé', width: 280 },
+        { key: 'user', label: 'Utilisateur', width: 120 },
+        { key: 'amount', label: 'Montant', width: 100, align: 'right' as const },
+      ];
+      drawTableHeader(doc, cols);
+      const kindFr = (k: FinanceLedgerRow['kind']) =>
+        k === 'PURCHASE' ? 'Achat' : k === 'SALE' ? 'Vente' : 'Dépense';
+      items.forEach((row, i) => {
+        drawTableRow(
+          doc,
+          cols,
+          {
+            date: formatDateTimeFr(row.occurredAt),
+            kind: kindFr(row.kind),
+            desc: row.description,
+            user: row.user?.fullName?.trim() || row.user?.phone || '—',
+            amount: formatMoneyHtg(row.amount),
+          },
+          { alt: i % 2 === 1 },
+        );
+      });
+    }
+
+    return collectPdfBuffer(doc);
   }
 
   async createEntry(dto: CreateFinanceEntryDto, userId?: number) {

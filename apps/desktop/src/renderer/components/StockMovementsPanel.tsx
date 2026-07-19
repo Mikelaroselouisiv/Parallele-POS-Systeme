@@ -49,9 +49,10 @@ type Props = {
   movementsSkip: number;
   movementsPageSize: 5 | 10;
   movementDateOrder: 'asc' | 'desc';
-  stockQuery: string;
+  productOptions: Array<{ id: number; name: string }>;
+  selectedProductId: number | '';
   loading: boolean;
-  onStockQueryChange: (value: string) => void;
+  onProductChange: (value: number | '') => void;
   onOrderChange: (order: 'asc' | 'desc') => void;
   onPageSizeChange: (size: 5 | 10) => void;
   onReset: () => void;
@@ -65,9 +66,10 @@ export function StockMovementsPanel({
   movementsSkip,
   movementsPageSize,
   movementDateOrder,
-  stockQuery,
+  productOptions,
+  selectedProductId,
   loading,
-  onStockQueryChange,
+  onProductChange,
   onOrderChange,
   onPageSizeChange,
   onReset,
@@ -121,17 +123,25 @@ export function StockMovementsPanel({
           <p className="stock-movements-lead">
             {movementsTotal} mouvement{movementsTotal > 1 ? 's' : ''} au total ·{' '}
             {filteredMovements.length} affiché{filteredMovements.length > 1 ? 's' : ''}
-            {stockQuery.trim() ? ' (filtre actif)' : ''}
+            {selectedProductId !== '' ? ' (filtre produit actif)' : ''}
           </p>
         </div>
         <div className="stock-movements-toolbar">
           <label className="stock-movements-search">
-            Recherche
-            <input
-              value={stockQuery}
-              onChange={(e) => onStockQueryChange(e.target.value)}
-              placeholder="Produit, motif…"
-            />
+            Produit
+            <select
+              value={selectedProductId === '' ? '' : String(selectedProductId)}
+              onChange={(e) =>
+                onProductChange(e.target.value === '' ? '' : Number(e.target.value))
+              }
+            >
+              <option value="">Tous les produits</option>
+              {productOptions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             Tri
