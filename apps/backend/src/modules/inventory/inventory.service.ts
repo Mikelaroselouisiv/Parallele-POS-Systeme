@@ -1,9 +1,21 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InventorySessionKind, InventorySessionStatus, MovementType, Prisma } from '@prisma/client';
 import { USER_ATTRIBUTION_SELECT } from '../../common/user-attribution';
+import {
+  nowBusinessYmd,
+  ymdToBusinessDayEnd,
+} from '../../common/utils/business-timezone';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import type { UpdateInventoryLineDto } from './dto/physical-inventory.dto';
+
+/** Variation de stock d’un mouvement (IN/ADJUSTMENT +, OUT −). */
+export function signedMovementDelta(type: MovementType, quantity: number): number {
+  const q = Math.abs(Number(quantity));
+  if (!Number.isFinite(q)) return 0;
+  if (type === MovementType.OUT) return -q;
+  return q;
+}
 
 @Injectable()
 export class InventoryService {
@@ -653,7 +665,16 @@ export class InventoryService {
     return this.getInventorySession(sessionId);
   }
 
-  async getGlobalStockSnapshot(filters?: { companyIds?: number[]; departmentIds?: number[] }) {
+  /**
+   * Inventaire global. Si `asOf` (YYYY-MM-DD) est fourni et antérieur à aujourd’hui (Haïti),
+   * reconstruit le stock à la fin de ce jour :
+   * stock_au = stock_actuel − Σ mouvements postérieurs (signés IN+/OUT−/ADJUSTMENT+).
+   */
+  async getGlobalStockSnapshot(filters?: {
+    companyIds?: number[];
+    departmentIds?: number[];
+    asOf?: string;
+  }) {
     const where: Prisma.ProductWhereInput = {
       trackStock: true,
       isService: false,
@@ -679,21 +700,74 @@ export class InventoryService {
       orderBy: [{ company: { name: 'asc' } }, { department: { name: 'asc' } }, { name: 'asc' }],
     });
 
+    const todayYmd = nowBusinessYmd();
+    const asOfRaw = filters?.asOf?.trim() || undefined;
+    let asOfYmd: string | null = null;
+    let historical = false;
+    let cutoff: Date | null = null;
+
+    if (asOfRaw) {
+      try {
+        cutoff = ymdToBusinessDayEnd(asOfRaw);
+        asOfYmd = asOfRaw.trim();
+      } catch {
+        throw new BadRequestException('asOf attendu au format YYYY-MM-DD');
+      }
+      if (asOfYmd > todayYmd) {
+        throw new BadRequestException('asOf ne peut pas être une date future');
+      }
+      historical = asOfYmd < todayYmd;
+    }
+
+    const stockByProductId = new Map<number, number>();
+    for (const p of products) {
+      stockByProductId.set(p.id, Number(p.stock));
+    }
+
+    if (historical && cutoff && products.length > 0) {
+      const productIds = products.map((p) => p.id);
+      const movements = await this.prisma.stockMovement.findMany({
+        where: {
+          deletedAt: null,
+          productId: { in: productIds },
+          createdAt: { gt: cutoff },
+        },
+        select: { productId: true, type: true, quantity: true },
+      });
+
+      const deltaAfter = new Map<number, number>();
+      for (const m of movements) {
+        const signed = signedMovementDelta(m.type, Number(m.quantity));
+        deltaAfter.set(m.productId, (deltaAfter.get(m.productId) ?? 0) + signed);
+      }
+      for (const id of productIds) {
+        const current = stockByProductId.get(id) ?? 0;
+        const delta = deltaAfter.get(id) ?? 0;
+        stockByProductId.set(id, current - delta);
+      }
+    }
+
     return {
       generatedAt: new Date().toISOString(),
-      items: products.map((p) => ({
-        id: p.id,
-        name: p.name,
-        sku: p.sku,
-        stock: Number(p.stock),
-        stockMin: Number(p.stockMin),
-        company: p.department?.company ?? null,
-        department: p.department
-          ? { id: p.department.id, name: p.department.name }
-          : null,
-        unitLabel: this.packagingLabelFromProduct(p),
-        lowStock: Number(p.stock) <= Number(p.stockMin),
-      })),
+      asOf: asOfYmd ?? todayYmd,
+      historical,
+      items: products.map((p) => {
+        const stock = stockByProductId.get(p.id) ?? Number(p.stock);
+        const stockMin = Number(p.stockMin);
+        return {
+          id: p.id,
+          name: p.name,
+          sku: p.sku,
+          stock,
+          stockMin,
+          company: p.department?.company ?? null,
+          department: p.department
+            ? { id: p.department.id, name: p.department.name }
+            : null,
+          unitLabel: this.packagingLabelFromProduct(p),
+          lowStock: stock <= stockMin,
+        };
+      }),
     };
   }
 }

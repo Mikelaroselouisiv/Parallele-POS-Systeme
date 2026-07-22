@@ -123,7 +123,8 @@ export class InventoryController {
     @Param('id', ParseIntPipe) id: number,
     @GetUser() user?: { id?: number },
   ) {
-    return this.inventoryService.completeInventorySession(id, user?.id);
+    // Ajuste le stock et écrit le journal (écarts comptés vs système).
+    return this.inventoryService.completeInventorySession(id, user?.id, true);
   }
 
   @Post('sessions/:id/cancel')
@@ -174,6 +175,7 @@ export class InventoryController {
   globalSnapshot(
     @Query('companyIds') companyIdsRaw?: string,
     @Query('departmentIds') departmentIdsRaw?: string,
+    @Query('asOf') asOf?: string,
   ) {
     const parseIds = (raw?: string) =>
       raw
@@ -183,6 +185,7 @@ export class InventoryController {
     return this.inventoryService.getGlobalStockSnapshot({
       companyIds: parseIds(companyIdsRaw),
       departmentIds: parseIds(departmentIdsRaw),
+      asOf: asOf?.trim() || undefined,
     });
   }
 
@@ -192,6 +195,7 @@ export class InventoryController {
     @Res() res: Response,
     @Query('companyIds') companyIdsRaw?: string,
     @Query('departmentIds') departmentIdsRaw?: string,
+    @Query('asOf') asOf?: string,
   ) {
     const parseIds = (raw?: string) =>
       raw
@@ -201,6 +205,7 @@ export class InventoryController {
     const snapshot = await this.inventoryService.getGlobalStockSnapshot({
       companyIds: parseIds(companyIdsRaw),
       departmentIds: parseIds(departmentIdsRaw),
+      asOf: asOf?.trim() || undefined,
     });
 
     const companyNames = [
@@ -213,11 +218,15 @@ export class InventoryController {
     const brandName =
       companyNames.length === 1 ? companyNames[0] : companyNames.join(', ') || 'POS Frères Baziles';
 
+    const asOfLabel = formatDateFr(snapshot.asOf);
     const doc = createPdfDoc({ landscape: true });
     await drawReportHeader(doc, {
-      title: 'Inventaire global',
+      title: snapshot.historical ? `Inventaire au ${asOfLabel}` : 'Inventaire global',
       brand: { companyName: brandName },
       metaLines: [
+        snapshot.historical
+          ? `Stock reconstruit à la fin de la journée du ${asOfLabel} (fuseau Haïti)`
+          : `Stock actuel au ${asOfLabel}`,
         `Produits : ${snapshot.items.length}`,
         generatedMetaLine(`réf. ${formatDateTimeFr(snapshot.generatedAt)}`),
       ],
@@ -257,11 +266,11 @@ export class InventoryController {
     }
 
     const pdfBuffer = await collectPdfBuffer(doc);
-    const filenameDate = formatDateFr(new Date()).replace(/\//g, '-');
+    const filenameDate = (snapshot.asOf ?? formatDateFr(new Date())).replace(/\//g, '-');
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="inventaire_global_${filenameDate}.pdf"`,
+      `attachment; filename="inventaire_${filenameDate}.pdf"`,
     );
     res.send(pdfBuffer);
   }

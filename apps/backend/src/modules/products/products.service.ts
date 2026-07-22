@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { MovementType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -220,6 +220,24 @@ export class ProductsService {
 
     return this.prisma.$transaction(async (tx) => {
       await tx.product.update({ where: { id }, data });
+
+      // Toute modification explicite du stock doit entrer dans le journal (historique as-of).
+      if (productFields.stock !== undefined) {
+        const oldStock = Number(existingProduct.stock);
+        const newStock = Number(productFields.stock);
+        if (Number.isFinite(oldStock) && Number.isFinite(newStock) && newStock !== oldStock) {
+          const delta = newStock - oldStock;
+          await tx.stockMovement.create({
+            data: {
+              productId: id,
+              quantity: Math.abs(delta),
+              type: delta < 0 ? MovementType.OUT : MovementType.ADJUSTMENT,
+              reason: 'Ajustement fiche produit',
+              createdById: userId,
+            },
+          });
+        }
+      }
 
       if (salePrice !== undefined || volumePrices !== undefined) {
         if (volumePrices !== undefined) {

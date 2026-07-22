@@ -6,6 +6,7 @@ import {
   deleteProduct,
   getCompanies,
   getDepartments,
+  getGlobalStockSnapshot,
   getPackagingUnits,
   getProducts,
   getRecipeByProduct,
@@ -113,6 +114,13 @@ function ProductCardColorPicker({
   );
 }
 
+function formatYmdLocal(d = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export function StockPage() {
   const { can } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
@@ -141,6 +149,10 @@ export function StockPage() {
   const [catalogFilterCompanyId, setCatalogFilterCompanyId] = useState<number | ''>('');
   const [catalogFilterDeptId, setCatalogFilterDeptId] = useState<number | ''>('');
   const [catalogFilterDepartments, setCatalogFilterDepartments] = useState<Department[]>([]);
+  const [catalogAsOf, setCatalogAsOf] = useState(formatYmdLocal);
+  const [catalogHistorical, setCatalogHistorical] = useState(false);
+  const [catalogStockById, setCatalogStockById] = useState<Map<number, number>>(new Map());
+  const [catalogAsOfLoading, setCatalogAsOfLoading] = useState(false);
   const [addProductOpen, setAddProductOpen] = useState(false);
 
   const isAdmin = can(['ADMIN']);
@@ -185,6 +197,43 @@ export function StockPage() {
     setCompanies(co);
     if (co.length && companyId === '') setCompanyId(co[0].id);
   };
+
+  useEffect(() => {
+    if (tab !== 'catalog') return;
+    const today = formatYmdLocal();
+    if (!catalogAsOf || catalogAsOf >= today) {
+      setCatalogHistorical(false);
+      setCatalogStockById(new Map());
+      return;
+    }
+    let cancelled = false;
+    setCatalogAsOfLoading(true);
+    void getGlobalStockSnapshot({
+      companyIds: catalogFilterCompanyId !== '' ? [catalogFilterCompanyId] : undefined,
+      departmentIds: catalogFilterDeptId !== '' ? [catalogFilterDeptId] : undefined,
+      asOf: catalogAsOf,
+    })
+      .then((snap) => {
+        if (cancelled) return;
+        const map = new Map<number, number>();
+        for (const item of snap.items) map.set(item.id, item.stock);
+        setCatalogStockById(map);
+        setCatalogHistorical(Boolean(snap.historical));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMsg('Impossible de charger le stock à cette date.', { persist: true });
+          setCatalogHistorical(false);
+          setCatalogStockById(new Map());
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCatalogAsOfLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, catalogAsOf, catalogFilterCompanyId, catalogFilterDeptId]);
 
   useEffect(() => {
     if (companyId === '') {
@@ -579,6 +628,15 @@ export function StockPage() {
           </h2>
           <div className="form-grid" style={{ marginBottom: '1rem', maxWidth: '36rem' }}>
             <label>
+              Stock au
+              <input
+                type="date"
+                value={catalogAsOf}
+                max={formatYmdLocal()}
+                onChange={(e) => setCatalogAsOf(e.target.value || formatYmdLocal())}
+              />
+            </label>
+            <label>
               Filtrer par entreprise
               <select
                 value={catalogFilterCompanyId === '' ? '' : String(catalogFilterCompanyId)}
@@ -612,6 +670,13 @@ export function StockPage() {
               </select>
             </label>
           </div>
+          {catalogHistorical ? (
+            <p className="info-text" style={{ marginBottom: '0.75rem' }}>
+              {catalogAsOfLoading
+                ? 'Calcul du stock historique…'
+                : `Stock reconstruit à la fin du ${catalogAsOf} (livraisons, réceptions, mouvements manuels).`}
+            </p>
+          ) : null}
           <div className="table-wrap">
             <table className="data-table">
               <thead>
@@ -640,6 +705,9 @@ export function StockPage() {
                 ) : (
                   catalogFilteredSorted.map((p) => {
                     const dp = defaultUnitPrice(p);
+                    const displayStock = catalogHistorical
+                      ? (catalogStockById.get(p.id) ?? Number(p.stock))
+                      : Number(p.stock);
                     return (
                       <tr key={p.id}>
                         <td>{p.company?.name ?? (p.companyId != null ? `#${p.companyId}` : '—')}</td>
@@ -653,11 +721,17 @@ export function StockPage() {
                         </td>
                         <td>{p.sku ?? '—'}</td>
                         <td className="journal-amt">{dp != null ? formatMoney(dp) : '—'}</td>
-                        <td>{formatQuantity(Number(p.stock))}</td>
+                        <td>{formatQuantity(displayStock)}</td>
                         <td className="table-actions catalog-table-actions">
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
+                            disabled={catalogHistorical}
+                            title={
+                              catalogHistorical
+                                ? 'Passez à aujourd’hui pour modifier la fiche'
+                                : undefined
+                            }
                             onClick={() => setEditProduct(p)}
                           >
                             Modifier

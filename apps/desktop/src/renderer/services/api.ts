@@ -750,11 +750,13 @@ export async function closeRegisterSession(
 export async function getGlobalStockSnapshot(params?: {
   companyIds?: number[];
   departmentIds?: number[];
+  asOf?: string;
 }): Promise<GlobalStockSnapshot> {
   const { data } = await api.get<GlobalStockSnapshot>('/inventory/global-snapshot', {
     params: {
       companyIds: params?.companyIds?.length ? params.companyIds.join(',') : undefined,
       departmentIds: params?.departmentIds?.length ? params.departmentIds.join(',') : undefined,
+      asOf: params?.asOf?.trim() || undefined,
     },
   });
   return data;
@@ -763,11 +765,13 @@ export async function getGlobalStockSnapshot(params?: {
 export async function exportGlobalStockSnapshotPdf(params?: {
   companyIds?: number[];
   departmentIds?: number[];
+  asOf?: string;
 }): Promise<Blob> {
   const { data } = await api.get<Blob>('/inventory/global-snapshot/export/pdf', {
     params: {
       companyIds: params?.companyIds?.length ? params.companyIds.join(',') : undefined,
       departmentIds: params?.departmentIds?.length ? params.departmentIds.join(',') : undefined,
+      asOf: params?.asOf?.trim() || undefined,
     },
     responseType: 'blob',
   });

@@ -182,6 +182,10 @@ export interface GlobalStockSnapshotItem {
 
 export interface GlobalStockSnapshot {
   generatedAt: string;
+  /** Jour calendaire Haïti (YYYY-MM-DD) représenté par le snapshot. */
+  asOf: string;
+  /** true si asOf est antérieur à aujourd’hui (stock reconstruit). */
+  historical: boolean;
   items: GlobalStockSnapshotItem[];
 }
 

@@ -133,6 +133,8 @@ export function DashboardPage() {
   const [globalCompanyIds, setGlobalCompanyIds] = useState<number[]>([]);
   const [globalDeptIds, setGlobalDeptIds] = useState<number[]>([]);
   const [globalItems, setGlobalItems] = useState<GlobalStockSnapshotItem[]>([]);
+  const [globalAsOf, setGlobalAsOf] = useState(() => formatYmd(new Date()));
+  const [globalHistorical, setGlobalHistorical] = useState(false);
   const [globalLoading, setGlobalLoading] = useState(false);
   const [globalExporting, setGlobalExporting] = useState(false);
 
@@ -291,8 +293,11 @@ export function DashboardPage() {
       const snap = await getGlobalStockSnapshot({
         companyIds: globalCompanyIds.length ? globalCompanyIds : undefined,
         departmentIds: globalDeptIds.length ? globalDeptIds : undefined,
+        asOf: globalAsOf || undefined,
       });
       setGlobalItems(snap.items);
+      setGlobalHistorical(Boolean(snap.historical));
+      if (snap.asOf) setGlobalAsOf(snap.asOf);
     } catch {
       setMsg('Chargement inventaire impossible.', { persist: true });
     } finally {
@@ -306,11 +311,12 @@ export function DashboardPage() {
       const blob = await exportGlobalStockSnapshotPdf({
         companyIds: globalCompanyIds.length ? globalCompanyIds : undefined,
         departmentIds: globalDeptIds.length ? globalDeptIds : undefined,
+        asOf: globalAsOf || undefined,
       });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `inventaire_global_${new Date().toISOString().slice(0, 10)}.pdf`;
+      a.download = `inventaire_${globalAsOf || new Date().toISOString().slice(0, 10)}.pdf`;
       a.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch {
@@ -1349,6 +1355,15 @@ export function DashboardPage() {
               <section className="card" style={{ marginTop: '1rem' }}>
                 <h2>Inventaire global</h2>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.75rem' }}>
+                  <label>
+                    Stock au
+                    <input
+                      type="date"
+                      value={globalAsOf}
+                      max={formatYmd(new Date())}
+                      onChange={(e) => setGlobalAsOf(e.target.value)}
+                    />
+                  </label>
                   <div>
                     <strong>Entreprises</strong>
                     <ul style={{ listStyle: 'none', padding: 0, margin: '0.35rem 0 0' }}>
@@ -1384,6 +1399,12 @@ export function DashboardPage() {
                     </ul>
                   </div>
                 </div>
+                {globalHistorical ? (
+                  <p className="muted" style={{ marginBottom: '0.75rem' }}>
+                    Affichage historique : stock reconstruit à la fin du {globalAsOf} (ventes livrées,
+                    réceptions, entrées/sorties manuelles).
+                  </p>
+                ) : null}
                 <div className="table-actions" style={{ marginBottom: '0.75rem' }}>
                   <button
                     type="button"
