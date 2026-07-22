@@ -52,40 +52,20 @@ import type {
 
 import { formatMoney } from '../utils/currency';
 import { formatQuantity } from '../utils/formatQuantity';
-
-
+import {
+  defaultMonthStartYmdBusiness,
+  formatBusinessYmd,
+} from '../utils/businessDate';
 
 const PIE_COLORS = ['#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6', '#f97316', '#64748b'];
 
-
-
-function pad2(n: number) {
-
-  return String(n).padStart(2, '0');
-
-}
-
-
-
 function formatYmd(d: Date): string {
-
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-
+  return formatBusinessYmd(d);
 }
-
-
 
 function defaultMonthStartYmd(): string {
-
-  const d = new Date();
-
-  d.setDate(1);
-
-  return formatYmd(d);
-
+  return defaultMonthStartYmdBusiness();
 }
-
-
 
 type Props = {
   companies: CompanyListItem[];

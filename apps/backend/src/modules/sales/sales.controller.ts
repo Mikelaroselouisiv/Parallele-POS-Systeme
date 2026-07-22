@@ -16,6 +16,7 @@ import { GetUser } from '../../common/decorators/get-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { parseDateBoundInput } from '../../common/utils/business-timezone';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { SalesService } from './sales.service';
 
@@ -47,14 +48,16 @@ export class SalesController {
     if (companyId !== undefined && Number.isFinite(companyId) && companyId > 0) {
       const skip = skipRaw ? Number.parseInt(skipRaw, 10) : 0;
       const take = takeRaw ? Number.parseInt(takeRaw, 10) : 10;
-      const createdAtGte =
-        createdFrom != null && createdFrom.trim() !== ''
-          ? new Date(createdFrom.trim())
-          : undefined;
-      const createdAtLte =
-        createdTo != null && createdTo.trim() !== '' ? new Date(createdTo.trim()) : undefined;
-      const gteOk = createdAtGte != null && Number.isFinite(createdAtGte.getTime());
-      const lteOk = createdAtLte != null && Number.isFinite(createdAtLte.getTime());
+      const parseBound = (raw: string | undefined, bound: 'start' | 'end'): Date | undefined => {
+        if (raw == null || raw.trim() === '') return undefined;
+        try {
+          return parseDateBoundInput(raw, bound);
+        } catch {
+          return undefined;
+        }
+      };
+      const createdAtGte = parseBound(createdFrom, 'start');
+      const createdAtLte = parseBound(createdTo, 'end');
       const departmentIdN = departmentIdRaw ? Number.parseInt(departmentIdRaw, 10) : NaN;
       const departmentId =
         Number.isFinite(departmentIdN) && (departmentIdN as number) > 0 ? (departmentIdN as number) : undefined;
@@ -62,8 +65,8 @@ export class SalesController {
         companyId,
         skip,
         take,
-        createdAtGte: gteOk ? createdAtGte : undefined,
-        createdAtLte: lteOk ? createdAtLte : undefined,
+        createdAtGte,
+        createdAtLte,
         departmentId,
       });
     }

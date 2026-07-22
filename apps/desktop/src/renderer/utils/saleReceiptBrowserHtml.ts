@@ -1,4 +1,5 @@
 import type { Sale } from '../types/api';
+import { formatBusinessDateTime } from './businessDate';
 import { formatMoney } from './currency';
 
 function escapeHtml(s: string): string {
@@ -69,7 +70,7 @@ export function buildSaleDetailPrintHtml(sale: Sale, companyName?: string): stri
   <h1>Vente #${sale.id}</h1>
   <div class="meta">
     ${companyName ? `<div><strong>Entreprise :</strong> ${escapeHtml(companyName)}</div>` : ''}
-    <div><strong>Date :</strong> ${escapeHtml(new Date(sale.createdAt).toLocaleString())}</div>
+    <div><strong>Date :</strong> ${escapeHtml(formatBusinessDateTime(sale.createdAt))}</div>
     <div><strong>Client :</strong> ${escapeHtml(client)}</div>
     <div><strong>Caissier :</strong> ${escapeHtml(caissier)}</div>
     <div><strong>Statut :</strong> ${escapeHtml(sale.status)}</div>

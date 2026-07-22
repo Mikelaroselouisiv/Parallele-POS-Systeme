@@ -1,5 +1,6 @@
 import {
   nowBusinessYmd,
+  parseDateBoundInput,
   ymdToBusinessDayEnd,
   ymdToBusinessDayStart,
   zonedLocalToUtc,
@@ -15,7 +16,6 @@ describe('business-timezone', () => {
     const end = ymdToBusinessDayEnd('2026-07-21');
     expect(end.toISOString()).toBe('2026-07-22T03:59:59.999Z');
 
-    // Sale at 22:00 Haiti on July 21 = 02:00 UTC July 22
     const saleAt22Haiti = zonedLocalToUtc(2026, 7, 21, 22, 0, 0, 0);
     expect(saleAt22Haiti.toISOString()).toBe('2026-07-22T02:00:00.000Z');
     expect(saleAt22Haiti.getTime()).toBeGreaterThanOrEqual(ymdToBusinessDayStart('2026-07-21').getTime());
@@ -38,8 +38,18 @@ describe('business-timezone', () => {
   });
 
   it('reports business YMD for late Haiti evening when process is UTC', () => {
-    // 2026-07-22 02:00 UTC = 2026-07-21 22:00 Haiti
     const instant = new Date('2026-07-22T02:00:00.000Z');
     expect(nowBusinessYmd(instant)).toBe('2026-07-21');
+  });
+
+  it('parseDateBoundInput accepts YYYY-MM-DD as Haiti day bounds', () => {
+    expect(parseDateBoundInput('2026-07-21', 'start').toISOString()).toBe('2026-07-21T04:00:00.000Z');
+    expect(parseDateBoundInput('2026-07-21', 'end').toISOString()).toBe('2026-07-22T03:59:59.999Z');
+  });
+
+  it('parseDateBoundInput keeps absolute ISO instants', () => {
+    const iso = '2026-07-21T20:00:00.000Z';
+    expect(parseDateBoundInput(iso, 'start').toISOString()).toBe(iso);
+    expect(parseDateBoundInput(iso, 'end').toISOString()).toBe(iso);
   });
 });

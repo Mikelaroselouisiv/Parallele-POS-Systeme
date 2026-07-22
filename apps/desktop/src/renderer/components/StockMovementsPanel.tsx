@@ -13,6 +13,7 @@ import {
 } from 'recharts';
 
 import type { StockMovementRow } from '../types/api';
+import { formatBusinessDateTime, formatBusinessYmd } from '../utils/businessDate';
 import { formatUserLabel } from '../utils/userAttribution';
 import { formatQuantity } from '../utils/formatQuantity';
 import { stockPackagingLabelFromMovementProduct } from '../utils/packagingDisplay';
@@ -49,12 +50,17 @@ type Props = {
   movementsSkip: number;
   movementsPageSize: 5 | 10;
   movementDateOrder: 'asc' | 'desc';
+  dateFrom: string;
+  dateTo: string;
   productOptions: Array<{ id: number; name: string }>;
   selectedProductId: number | '';
   loading: boolean;
   onProductChange: (value: number | '') => void;
   onOrderChange: (order: 'asc' | 'desc') => void;
   onPageSizeChange: (size: 5 | 10) => void;
+  onDateFromChange: (value: string) => void;
+  onDateToChange: (value: string) => void;
+  onApplyDates: () => void;
   onReset: () => void;
   onLoadMore: () => void;
 };
@@ -66,12 +72,17 @@ export function StockMovementsPanel({
   movementsSkip,
   movementsPageSize,
   movementDateOrder,
+  dateFrom,
+  dateTo,
   productOptions,
   selectedProductId,
   loading,
   onProductChange,
   onOrderChange,
   onPageSizeChange,
+  onDateFromChange,
+  onDateToChange,
+  onApplyDates,
   onReset,
   onLoadMore,
 }: Props) {
@@ -95,8 +106,7 @@ export function StockMovementsPanel({
   const dailyActivity = useMemo(() => {
     const map = new Map<string, number>();
     for (const m of filteredMovements) {
-      const d = new Date(m.createdAt);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const key = formatBusinessYmd(new Date(m.createdAt));
       map.set(key, (map.get(key) ?? 0) + 1);
     }
     return [...map.entries()]
@@ -127,6 +137,17 @@ export function StockMovementsPanel({
           </p>
         </div>
         <div className="stock-movements-toolbar">
+          <label>
+            Du
+            <input type="date" value={dateFrom} onChange={(e) => onDateFromChange(e.target.value)} />
+          </label>
+          <label>
+            Au
+            <input type="date" value={dateTo} onChange={(e) => onDateToChange(e.target.value)} />
+          </label>
+          <button type="button" className="btn btn-secondary btn-sm" disabled={loading} onClick={onApplyDates}>
+            Filtrer
+          </button>
           <label className="stock-movements-search">
             Produit
             <select
@@ -242,7 +263,7 @@ export function StockMovementsPanel({
                 <span className="stock-movement-type">{movementTypeLabel(m.type)}</span>
                 <strong className="stock-movement-product">{m.product?.name ?? `#${m.productId}`}</strong>
                 <span className="stock-movement-meta">
-                  {new Date(m.createdAt).toLocaleString()} · {formatUserLabel(m.createdBy)} ·{' '}
+                  {formatBusinessDateTime(m.createdAt)} · {formatUserLabel(m.createdBy)} ·{' '}
                   {movementReasonLabel(m.reason)}
                 </span>
               </div>

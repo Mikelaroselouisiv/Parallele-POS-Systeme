@@ -4,6 +4,7 @@ import { USER_ATTRIBUTION_SELECT } from '../../common/user-attribution';
 import {
   nowBusinessYmd,
   ymdToBusinessDayEnd,
+  ymdToBusinessDayStart,
 } from '../../common/utils/business-timezone';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -154,6 +155,8 @@ export class InventoryService {
     skip?: number;
     take?: number;
     companyId?: number;
+    dateFrom?: string;
+    dateTo?: string;
     /** Tri par date : plus récent d'abord (défaut) ou plus ancien d'abord. */
     order?: 'asc' | 'desc';
   }) {
@@ -162,13 +165,28 @@ export class InventoryService {
     const take = Math.min(500, Math.max(1, Math.floor(rawTake)));
     const orderDir = opts?.order === 'asc' ? 'asc' : 'desc';
 
-    const where = opts?.companyId
-      ? {
-          product: {
-            companyId: opts.companyId,
-          },
-        }
-      : undefined;
+    const where: Prisma.StockMovementWhereInput = {};
+    if (opts?.companyId) {
+      where.product = { companyId: opts.companyId };
+    }
+    const createdAt: Prisma.DateTimeFilter = {};
+    if (opts?.dateFrom?.trim()) {
+      try {
+        createdAt.gte = ymdToBusinessDayStart(opts.dateFrom.trim());
+      } catch {
+        /* ignore */
+      }
+    }
+    if (opts?.dateTo?.trim()) {
+      try {
+        createdAt.lte = ymdToBusinessDayEnd(opts.dateTo.trim());
+      } catch {
+        /* ignore */
+      }
+    }
+    if (createdAt.gte || createdAt.lte) {
+      where.createdAt = createdAt;
+    }
 
     const [items, total] = await Promise.all([
       this.prisma.stockMovement.findMany({
@@ -176,9 +194,11 @@ export class InventoryService {
         orderBy: { createdAt: orderDir },
         skip,
         take,
-        where,
+        where: Object.keys(where).length ? where : undefined,
       }),
-      this.prisma.stockMovement.count({ where }),
+      this.prisma.stockMovement.count({
+        where: Object.keys(where).length ? where : undefined,
+      }),
     ]);
     return { items, total };
   }

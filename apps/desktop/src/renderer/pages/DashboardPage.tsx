@@ -49,33 +49,18 @@ import { VentesDepartmentModal } from '../components/VentesDepartmentModal';
 import { StockLowAlertsPanel } from '../components/StockLowAlertsPanel';
 import { StockMovementsPanel } from '../components/StockMovementsPanel';
 import { formatMoney } from '../utils/currency';
-
-function pad2(n: number) {
-  return String(n).padStart(2, '0');
-}
+import {
+  defaultMonthStartYmdBusiness,
+  formatBusinessDateTime,
+  formatBusinessYmd,
+} from '../utils/businessDate';
 
 function formatYmd(d: Date): string {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  return formatBusinessYmd(d);
 }
 
 function defaultMonthStartYmd(): string {
-  const d = new Date();
-  d.setDate(1);
-  return formatYmd(d);
-}
-
-function ymdStartIso(ymd: string): string | undefined {
-  if (!ymd.trim()) return undefined;
-  const [y, m, d] = ymd.split('-').map((x) => Number.parseInt(x, 10));
-  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return undefined;
-  return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
-}
-
-function ymdEndIso(ymd: string): string | undefined {
-  if (!ymd.trim()) return undefined;
-  const [y, m, d] = ymd.split('-').map((x) => Number.parseInt(x, 10));
-  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return undefined;
-  return new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
+  return defaultMonthStartYmdBusiness();
 }
 
 export function DashboardPage() {
@@ -128,6 +113,8 @@ export function DashboardPage() {
   const [movementsPageSize, setMovementsPageSize] = useState<5 | 10>(5);
   /** Tri serveur par date de mouvement. */
   const [movementDateOrder, setMovementDateOrder] = useState<'asc' | 'desc'>('desc');
+  const [movementsDateFrom, setMovementsDateFrom] = useState(defaultMonthStartYmd);
+  const [movementsDateTo, setMovementsDateTo] = useState(() => formatYmd(new Date()));
   const [stockProductId, setStockProductId] = useState<number | ''>('');
   const [registerSessionModal, setRegisterSessionModal] = useState<RegisterSessionDetail | null>(null);
   const [globalCompanyIds, setGlobalCompanyIds] = useState<number[]>([]);
@@ -188,11 +175,10 @@ export function DashboardPage() {
   );
 
   const salesTxnFilterParams = useMemo(() => {
-    let createdFrom: string | undefined;
-    let createdTo: string | undefined;
-    if (txnDateFrom.trim()) createdFrom = ymdStartIso(txnDateFrom);
-    if (txnDateTo.trim()) createdTo = ymdEndIso(txnDateTo);
-    return { createdFrom, createdTo };
+    return {
+      createdFrom: txnDateFrom.trim() || undefined,
+      createdTo: txnDateTo.trim() || undefined,
+    };
   }, [txnDateFrom, txnDateTo]);
 
   const salesListQuery = useMemo(() => ({ ...salesTxnFilterParams }), [salesTxnFilterParams]);
@@ -267,7 +253,14 @@ export function DashboardPage() {
 
     void Promise.all([
       getInventoryAlerts({ threshold: 5, companyId: cid, skip: 0, take: alertsTake }),
-      getInventoryMovements({ companyId: cid, skip: 0, take: 5, order: 'desc' }),
+      getInventoryMovements({
+        companyId: cid,
+        skip: 0,
+        take: 5,
+        order: 'desc',
+        dateFrom: movementsDateFrom || undefined,
+        dateTo: movementsDateTo || undefined,
+      }),
     ])
       .then(([a, mov]) => {
         setAlerts(a.items);
@@ -522,6 +515,8 @@ export function DashboardPage() {
         skip: 0,
         take: opts.take,
         order: opts.order,
+        dateFrom: movementsDateFrom || undefined,
+        dateTo: movementsDateTo || undefined,
       });
       setMovements(mov.items);
       setMovementsTotal(mov.total);
@@ -537,6 +532,8 @@ export function DashboardPage() {
     setMovementDateOrder('desc');
     setMovementsPageSize(5);
     setStockProductId('');
+    setMovementsDateFrom(defaultMonthStartYmd());
+    setMovementsDateTo(formatYmd(new Date()));
     await refetchMovementsFromStart({ order: 'desc', take: 5 });
   }
 
@@ -552,6 +549,8 @@ export function DashboardPage() {
         skip: nextSkip,
         take: movementsPageSize,
         order: movementDateOrder,
+        dateFrom: movementsDateFrom || undefined,
+        dateTo: movementsDateTo || undefined,
       });
       setMovements((prev) => [...prev, ...mov.items]);
       setMovementsSkip(nextSkip);
@@ -1041,7 +1040,7 @@ export function DashboardPage() {
                             style={{ cursor: 'pointer' }}
                           >
                             <td>{s.id}</td>
-                            <td>{new Date(s.createdAt).toLocaleString()}</td>
+                            <td>{formatBusinessDateTime(s.createdAt)}</td>
                             <td>{(s.clientName && s.clientName.trim()) || '—'}</td>
                             <td className="journal-amt">{formatMoney(s.total)}</td>
                             <td>
@@ -1305,7 +1304,7 @@ export function DashboardPage() {
                         <span>
                           <span>{row.description}</span>
                           <span className="dept-hint" style={{ display: 'block', marginTop: '0.2rem' }}>
-                            {new Date(row.occurredAt).toLocaleString()} ·{' '}
+                            {formatBusinessDateTime(row.occurredAt)} ·{' '}
                             {row.user?.fullName?.trim() || row.user?.phone || '—'}
                           </span>
                         </span>
@@ -1464,10 +1463,17 @@ export function DashboardPage() {
                 movementsSkip={movementsSkip}
                 movementsPageSize={movementsPageSize}
                 movementDateOrder={movementDateOrder}
+                dateFrom={movementsDateFrom}
+                dateTo={movementsDateTo}
                 productOptions={movementProductOptions}
                 selectedProductId={stockProductId}
                 loading={movementsLoading}
                 onProductChange={setStockProductId}
+                onDateFromChange={setMovementsDateFrom}
+                onDateToChange={setMovementsDateTo}
+                onApplyDates={() =>
+                  void refetchMovementsFromStart({ order: movementDateOrder, take: movementsPageSize })
+                }
                 onOrderChange={(order) => {
                   setMovementDateOrder(order);
                   void refetchMovementsFromStart({ order, take: movementsPageSize });

@@ -155,6 +155,8 @@ export class InventoryController {
     @Query('take') takeRaw?: string,
     @Query('companyId') companyIdRaw?: string,
     @Query('order') orderRaw?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
   ) {
     const parseIntOr = (raw: string | undefined, fallback: number) => {
       if (raw === undefined || raw === '') return fallback;
@@ -167,6 +169,8 @@ export class InventoryController {
       take: parseIntOr(takeRaw, 100),
       companyId: companyIdRaw ? Number.parseInt(companyIdRaw, 10) : undefined,
       order,
+      dateFrom: dateFrom?.trim() || undefined,
+      dateTo: dateTo?.trim() || undefined,
     });
   }
 

@@ -461,7 +461,7 @@ export async function listSales(params: {
   companyId: number;
   skip?: number;
   take?: number;
-  /** ISO 8601 (ex. depuis datetime-local converti). */
+  /** YYYY-MM-DD (jour Haïti) ou ISO datetime. */
   createdFrom?: string;
   createdTo?: string;
   departmentId?: number;
@@ -553,6 +553,8 @@ export async function getInventoryMovements(params?: {
   skip?: number;
   take?: number;
   companyId?: number;
+  dateFrom?: string;
+  dateTo?: string;
   /** Tri par date côté serveur : plus récent d'abord (desc) ou plus ancien d'abord (asc). */
   order?: 'asc' | 'desc';
 }): Promise<{ items: StockMovementRow[]; total: number }> {
@@ -561,6 +563,8 @@ export async function getInventoryMovements(params?: {
       skip: params?.skip ?? 0,
       take: params?.take ?? 100,
       companyId: params?.companyId ?? undefined,
+      dateFrom: params?.dateFrom,
+      dateTo: params?.dateTo,
       order: params?.order ?? 'desc',
     },
   });

@@ -2,20 +2,19 @@ import { useEffect, useState } from 'react';
 import { getDepartments, getUsers, listAuditLogs } from '../services/api';
 import type { AuditLogRow, Department, SessionUser } from '../types/api';
 import { auditActionLabel } from '../utils/auditActionLabel';
+import {
+  defaultMonthStartYmdBusiness,
+  formatBusinessDateTime,
+  formatBusinessYmd,
+} from '../utils/businessDate';
 import { formatUserLabel } from '../utils/userAttribution';
 
-function pad2(n: number) {
-  return String(n).padStart(2, '0');
-}
-
 function formatYmd(d: Date): string {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  return formatBusinessYmd(d);
 }
 
 function defaultMonthStartYmd(): string {
-  const d = new Date();
-  d.setDate(1);
-  return formatYmd(d);
+  return defaultMonthStartYmdBusiness();
 }
 
 type Props = {
@@ -177,7 +176,7 @@ export function AuditJournalPanel({ companyId }: Props) {
             ) : (
               items.map((row) => (
                 <tr key={row.id}>
-                  <td>{new Date(row.createdAt).toLocaleString()}</td>
+                  <td>{formatBusinessDateTime(row.createdAt)}</td>
                   <td>{formatUserLabel(row.user)}</td>
                   <td>
                     <small>{auditActionLabel(row.action)}</small>

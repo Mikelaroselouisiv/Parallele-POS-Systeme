@@ -7,8 +7,10 @@ export const BUSINESS_TIME_ZONE = 'America/Port-au-Prince';
 
 export type YmdParts = { y: number; m: number; d: number };
 
+const YMD_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
 export function parseYmd(ymd: string): YmdParts {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim());
+  const match = YMD_RE.exec(ymd.trim());
   if (!match) {
     throw new Error(`Date attendue au format YYYY-MM-DD, reçu: ${ymd}`);
   }
@@ -19,6 +21,10 @@ export function parseYmd(ymd: string): YmdParts {
     throw new Error(`Date invalide: ${ymd}`);
   }
   return { y, m, d };
+}
+
+export function isYmdString(value: string): boolean {
+  return YMD_RE.test(value.trim());
 }
 
 function formatPartsInZone(instantMs: number, timeZone: string) {
@@ -87,6 +93,23 @@ export function ymdToBusinessDayEnd(ymd: string): Date {
 export function ymdToBusinessNoon(ymd: string): Date {
   const { y, m, d } = parseYmd(ymd);
   return zonedLocalToUtc(y, m, d, 12, 0, 0, 0);
+}
+
+/**
+ * Interprète une borne de filtre :
+ * - `YYYY-MM-DD` → début/fin de journée métier Haïti
+ * - sinon (ISO datetime) → instant absolu
+ */
+export function parseDateBoundInput(raw: string, bound: 'start' | 'end'): Date {
+  const trimmed = raw.trim();
+  if (isYmdString(trimmed)) {
+    return bound === 'start' ? ymdToBusinessDayStart(trimmed) : ymdToBusinessDayEnd(trimmed);
+  }
+  const d = new Date(trimmed);
+  if (!Number.isFinite(d.getTime())) {
+    throw new Error(`Date/heure invalide: ${raw}`);
+  }
+  return d;
 }
 
 /** YYYY-MM-DD du calendrier métier pour un instant donné. */
